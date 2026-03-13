@@ -11,6 +11,8 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+print("Headers:", HEADERS)
+
 
 def get_snipe_locations():
     r = requests.get(f"{SNIPE_URL}/api/v1/locations", headers=HEADERS)

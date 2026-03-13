@@ -5,14 +5,14 @@ import requests
 SNIPE_URL = os.environ["SNIPE_URL"]
 API_KEY = os.environ["SNIPE_API_KEY"]
 
+print("API key length:", len(API_KEY))
+print("Headers:", f"Bearer {API_KEY[:6]}...")
+
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
     "Accept": "application/json",
     "Content-Type": "application/json"
 }
-
-print("Headers:", HEADERS)
-
 
 def get_snipe_locations():
     r = requests.get(f"{SNIPE_URL}/api/v1/locations", headers=HEADERS)

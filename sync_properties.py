@@ -2,11 +2,12 @@ import csv
 import os
 import requests
 
-SNIPE_URL = os.environ["SNIPE_URL"]
+SNIPE_URL = os.environ["SNIPE_URL"].strip()
+
 API_KEY = os.environ["SNIPE_API_KEY"]
+API_KEY = API_KEY.replace("\n", "").replace("\r", "").strip()
 
 print("API key length:", len(API_KEY))
-print("Headers:", f"Bearer {API_KEY[:6]}...")
 
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",

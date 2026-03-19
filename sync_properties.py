@@ -23,7 +23,7 @@ def download_properties_csv():
     print("Fetching AppFolio report...")
 
     cookies = {
-        "_appfolio_session": session_cookie
+        "_property_session": session_cookie
     }
 
     # Step 1: request report page

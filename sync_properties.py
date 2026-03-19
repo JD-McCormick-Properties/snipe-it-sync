@@ -24,13 +24,12 @@ def download_properties_csv():
         "_property_session": session_cookie
     }
 
-    # Direct export endpoint
-    export_url = f"{base_url}/reports/unit_directory.csv"
+    export_url = f"{base_url}/reporting/unit_directory_3d34c027-1db8-4d6f-92df-0d0d4ce16dc8/csv"
 
     r = requests.get(export_url, cookies=cookies)
     r.raise_for_status()
 
-    # Check if we accidentally got HTML (login page)
+    # safety check
     if b"<html" in r.content[:500]:
         raise Exception("Got HTML instead of CSV — session may be invalid")
 

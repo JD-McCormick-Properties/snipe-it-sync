@@ -15,35 +15,24 @@ HEADERS = {
 # Download AppFolio CSV
 # -------------------------------
 def download_properties_csv():
-    import re
-
     base_url = os.environ.get("APPFOLIO_BASE_URL")
     session_cookie = os.environ.get("APPFOLIO_SESSION")
 
-    print("Fetching AppFolio report...")
+    print("Downloading AppFolio CSV export...")
 
     cookies = {
         "_property_session": session_cookie
     }
 
-    # Step 1: request report page
-    report_url = f"{base_url}/buffered_reports/unit_directory"
-    r = requests.get(report_url, cookies=cookies)
+    # Direct export endpoint
+    export_url = f"{base_url}/reports/unit_directory.csv"
+
+    r = requests.get(export_url, cookies=cookies)
     r.raise_for_status()
 
-    # Step 2: extract S3 download link
-    match = re.search(r'https://appfolio-reports-app-prod[^"]+', r.text)
-
-    if not match:
-        raise Exception("Could not find download link in AppFolio response")
-
-    download_url = match.group(0)
-
-    print("Downloading CSV...")
-
-    # Step 3: download CSV
-    r = requests.get(download_url)
-    r.raise_for_status()
+    # Check if we accidentally got HTML (login page)
+    if b"<html" in r.content[:500]:
+        raise Exception("Got HTML instead of CSV — session may be invalid")
 
     with open("properties.csv", "wb") as f:
         f.write(r.content)

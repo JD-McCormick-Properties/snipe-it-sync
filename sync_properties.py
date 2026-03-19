@@ -11,6 +11,45 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+# -------------------------------
+# Download AppFolio CSV
+# -------------------------------
+def download_properties_csv():
+    import re
+
+    base_url = os.environ.get("APPFOLIO_BASE_URL")
+    session_cookie = os.environ.get("APPFOLIO_SESSION")
+
+    print("Fetching AppFolio report...")
+
+    cookies = {
+        "_appfolio_session": session_cookie
+    }
+
+    # Step 1: request report page
+    report_url = f"{base_url}/buffered_reports/unit_directory"
+    r = requests.get(report_url, cookies=cookies)
+    r.raise_for_status()
+
+    # Step 2: extract S3 download link
+    match = re.search(r'https://appfolio-reports-app-prod[^"]+', r.text)
+
+    if not match:
+        raise Exception("Could not find download link in AppFolio response")
+
+    download_url = match.group(0)
+
+    print("Downloading CSV...")
+
+    # Step 3: download CSV
+    r = requests.get(download_url)
+    r.raise_for_status()
+
+    with open("properties.csv", "wb") as f:
+        f.write(r.content)
+
+    print("Downloaded properties.csv")
+
 
 # -------------------------------
 # Get ALL locations (pagination)
@@ -105,6 +144,9 @@ def update_location(existing, row):
 # Main sync logic
 # -------------------------------
 def main():
+    # Step 0: download latest AppFolio data
+    download_properties_csv()
+
     print("Fetching existing locations...")
     existing_locations = get_all_locations()
     print(f"Found {len(existing_locations)} existing locations")

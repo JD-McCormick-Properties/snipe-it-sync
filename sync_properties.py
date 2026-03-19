@@ -45,7 +45,8 @@ def download_properties_csv():
 
     headers = {
         "User-Agent": "Mozilla/5.0",
-        "Referer": f"{base_url}/buffered_reports/unit_directory",
+        "Referer": f"{base_url}/buffered_reports/unit_directory?customize=true",
+        "Origin": base_url,
         "X-CSRF-Token": csrf_token,
         "X-Requested-With": "XMLHttpRequest",
         "Accept": "*/*",
@@ -54,7 +55,7 @@ def download_properties_csv():
 
     print("Requesting CSV export...")
 
-    r = requests.post(export_url, headers=headers, cookies=cookies)
+    r = requests.post(export_url, headers=headers, cookies=cookies, data={})
     r.raise_for_status()
 
     # Step 3: extract S3 download link from JSON

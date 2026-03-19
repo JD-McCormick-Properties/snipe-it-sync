@@ -24,4 +24,6 @@ jobs:
         env:
           SNIPE_URL: ${{ secrets.SNIPE_URL }}
           SNIPE_API_KEY: ${{ secrets.SNIPE_API_KEY }}
+          APPFOLIO_BASE_URL: ${{ secrets.APPFOLIO_BASE_URL }}
+          APPFOLIO_SESSION: ${{ secrets.APPFOLIO_SESSION }}
         run: python sync_properties.py

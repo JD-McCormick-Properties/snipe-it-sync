@@ -15,23 +15,59 @@ HEADERS = {
 # Download AppFolio CSV
 # -------------------------------
 def download_properties_csv():
+    import re
+
     base_url = os.environ.get("APPFOLIO_BASE_URL")
     session_cookie = os.environ.get("APPFOLIO_SESSION")
 
-    print("Downloading AppFolio CSV export...")
+    print("Fetching CSRF token...")
 
     cookies = {
         "_property_session": session_cookie
     }
 
-    export_url = f"{base_url}/reporting/unit_directory_3d34c027-1db8-4d6f-92df-0d0d4ce16dc8/csv"
-
-    r = requests.get(export_url, cookies=cookies)
+    # Step 1: get report page to extract CSRF token
+    report_page_url = f"{base_url}/buffered_reports/unit_directory"
+    r = requests.get(report_page_url, cookies=cookies)
     r.raise_for_status()
 
-    # safety check
-    if b"<html" in r.content[:500]:
-        raise Exception("Got HTML instead of CSV — session may be invalid")
+    # Extract CSRF token from HTML
+    match = re.search(r'name="csrf-token" content="([^"]+)"', r.text)
+    if not match:
+        raise Exception("Could not find CSRF token")
+
+    csrf_token = match.group(1)
+
+    print("Got CSRF token")
+
+    # Step 2: POST to export endpoint
+    export_url = f"{base_url}/reporting/unit_directory_3d34c027-1db8-4d6f-92df-0d0d4ce16dc8/csv"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": f"{base_url}/buffered_reports/unit_directory",
+        "X-CSRF-Token": csrf_token,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "*/*",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+    }
+
+    print("Requesting CSV export...")
+
+    r = requests.post(export_url, headers=headers, cookies=cookies)
+    r.raise_for_status()
+
+    # Step 3: extract S3 download link from JSON
+    data = r.json()
+    download_url = data.get("url")
+
+    if not download_url:
+        raise Exception("No download URL returned")
+
+    print("Downloading CSV file...")
+
+    r = requests.get(download_url)
+    r.raise_for_status()
 
     with open("properties.csv", "wb") as f:
         f.write(r.content)

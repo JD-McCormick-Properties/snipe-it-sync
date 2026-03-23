@@ -41,16 +41,28 @@ def get_all_locations():
 
 
 # -------------------------------
+# Build full address (handles line 2)
+# -------------------------------
+def build_address(row):
+    addr1 = (row.get("Property Street Address 1") or "").strip()
+    addr2 = (row.get("Property Street Address 2") or "").strip()
+
+    if addr2:
+        return f"{addr1} {addr2}"
+    return addr1
+
+
+# -------------------------------
 # Create location
 # -------------------------------
 def create_location(row):
     payload = {
-        "name": row["Property Name"].strip(),
-        "address": row["Street Address"].strip(),
-        "city": row["City"].strip(),
-        "state": row["State"].strip(),
-        "zip": row["Zip"].strip(),
-        "notes": row["Property ID"].strip()
+        "name": (row.get("Property Name") or row.get("Property") or "").strip(),
+        "address": build_address(row),
+        "city": (row.get("Property City") or "").strip(),
+        "state": (row.get("Property State") or "").strip(),
+        "zip": (row.get("Property Zip") or "").strip(),
+        "notes": (row.get("Property ID") or "").strip()
     }
 
     r = requests.post(
@@ -67,9 +79,11 @@ def create_location(row):
 # Update location (if changed)
 # -------------------------------
 def update_location(existing, row):
-    name = row["Property Name"].strip()
-    city = row["City"].strip()
-    state = row["State"].strip()
+    name = (row.get("Property Name") or row.get("Property") or "").strip()
+    city = (row.get("Property City") or "").strip()
+    state = (row.get("Property State") or "").strip()
+    address = build_address(row)
+    zip_code = (row.get("Property Zip") or "").strip()
 
     needs_update = False
 
@@ -79,6 +93,10 @@ def update_location(existing, row):
         needs_update = True
     if existing.get("state") != state:
         needs_update = True
+    if existing.get("address") != address:
+        needs_update = True
+    if existing.get("zip") != zip_code:
+        needs_update = True
 
     if not needs_update:
         print(f"⏭️ No change: {name}")
@@ -86,10 +104,10 @@ def update_location(existing, row):
 
     payload = {
         "name": name,
-        "address": row["Street Address"].strip(),
+        "address": address,
         "city": city,
         "state": state,
-        "zip": row["Zip"].strip(),
+        "zip": zip_code,
     }
 
     loc_id = existing["id"]
@@ -123,9 +141,10 @@ def main():
         print("CSV Columns:", reader.fieldnames, "\n")
 
         for row in reader:
-            prop_id = row["Property ID"].strip()
+            prop_id = (row.get("Property ID") or "").strip()
 
             if not prop_id:
+                print(f"⚠️ Skipping row (missing Property ID): {row}")
                 continue
 
             if prop_id not in existing_locations:

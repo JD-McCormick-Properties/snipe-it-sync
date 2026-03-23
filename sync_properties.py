@@ -45,12 +45,12 @@ def get_all_locations():
 # -------------------------------
 def create_location(row):
     payload = {
-        "name": row["property_name"].strip(),
-        "address": row["address"].strip(),
-        "city": row["city"].strip(),
-        "state": row["state"].strip(),
-        "zip": row["zip"].strip(),
-        "notes": row["property_id"].strip()
+        "name": row["Property Name"].strip(),
+        "address": row["Street Address"].strip(),
+        "city": row["City"].strip(),
+        "state": row["State"].strip(),
+        "zip": row["Zip"].strip(),
+        "notes": row["Property ID"].strip()
     }
 
     r = requests.post(
@@ -67,9 +67,9 @@ def create_location(row):
 # Update location (if changed)
 # -------------------------------
 def update_location(existing, row):
-    name = row["property_name"].strip()
-    city = row["city"].strip()
-    state = row["state"].strip()
+    name = row["Property Name"].strip()
+    city = row["City"].strip()
+    state = row["State"].strip()
 
     needs_update = False
 
@@ -86,10 +86,10 @@ def update_location(existing, row):
 
     payload = {
         "name": name,
-        "address": row["address"].strip(),
+        "address": row["Street Address"].strip(),
         "city": city,
         "state": state,
-        "zip": row["zip"].strip(),
+        "zip": row["Zip"].strip(),
     }
 
     loc_id = existing["id"]
@@ -120,8 +120,10 @@ def main():
     with open("properties.csv", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
 
+        print("CSV Columns:", reader.fieldnames, "\n")
+
         for row in reader:
-            prop_id = row["property_id"].strip()
+            prop_id = row["Property ID"].strip()
 
             if not prop_id:
                 continue

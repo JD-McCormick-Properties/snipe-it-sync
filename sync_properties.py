@@ -12,71 +12,6 @@ HEADERS = {
 }
 
 # -------------------------------
-# Download AppFolio CSV
-# -------------------------------
-def download_properties_csv():
-    import re
-
-    base_url = os.environ.get("APPFOLIO_BASE_URL")
-    session_cookie = os.environ.get("APPFOLIO_SESSION")
-
-    print("Fetching CSRF token...")
-
-    cookies = {
-        "_property_session": session_cookie
-    }
-
-    # Step 1: get report page to extract CSRF token
-    report_page_url = f"{base_url}/buffered_reports/unit_directory"
-    r = requests.get(report_page_url, cookies=cookies)
-    r.raise_for_status()
-
-    # Extract CSRF token from HTML
-    match = re.search(r'name="csrf-token" content="([^"]+)"', r.text)
-    if not match:
-        raise Exception("Could not find CSRF token")
-
-    csrf_token = match.group(1)
-
-    print("Got CSRF token")
-
-    # Step 2: POST to export endpoint
-    export_url = f"{base_url}/reporting/unit_directory_3d34c027-1db8-4d6f-92df-0d0d4ce16dc8/csv"
-
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Referer": f"{base_url}/buffered_reports/unit_directory?customize=true",
-        "Origin": base_url,
-        "X-CSRF-Token": csrf_token,
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept": "*/*",
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-    }
-
-    print("Requesting CSV export...")
-
-    r = requests.post(export_url, headers=headers, cookies=cookies, data={})
-    r.raise_for_status()
-
-    # Step 3: extract S3 download link from JSON
-    data = r.json()
-    download_url = data.get("url")
-
-    if not download_url:
-        raise Exception("No download URL returned")
-
-    print("Downloading CSV file...")
-
-    r = requests.get(download_url)
-    r.raise_for_status()
-
-    with open("properties.csv", "wb") as f:
-        f.write(r.content)
-
-    print("Downloaded properties.csv")
-
-
-# -------------------------------
 # Get ALL locations (pagination)
 # -------------------------------
 def get_all_locations():
@@ -93,7 +28,7 @@ def get_all_locations():
         rows = data.get("rows", [])
 
         for loc in rows:
-            prop_id = loc.get("notes")
+            prop_id = (loc.get("notes") or "").strip()
             if prop_id:
                 locations[prop_id] = loc
 
@@ -110,12 +45,12 @@ def get_all_locations():
 # -------------------------------
 def create_location(row):
     payload = {
-        "name": row["property_name"],
-        "address": row["address"],
-        "city": row["city"],
-        "state": row["state"],
-        "zip": row["zip"],
-        "notes": row["property_id"]
+        "name": row["property_name"].strip(),
+        "address": row["address"].strip(),
+        "city": row["city"].strip(),
+        "state": row["state"].strip(),
+        "zip": row["zip"].strip(),
+        "notes": row["property_id"].strip()
     }
 
     r = requests.post(
@@ -125,32 +60,36 @@ def create_location(row):
     )
 
     r.raise_for_status()
-    print(f"✅ Created: {row['property_name']}")
+    print(f"✅ Created: {payload['name']}")
 
 
 # -------------------------------
 # Update location (if changed)
 # -------------------------------
 def update_location(existing, row):
+    name = row["property_name"].strip()
+    city = row["city"].strip()
+    state = row["state"].strip()
+
     needs_update = False
 
-    if existing.get("name") != row["property_name"]:
+    if existing.get("name") != name:
         needs_update = True
-    if existing.get("city") != row["city"]:
+    if existing.get("city") != city:
         needs_update = True
-    if existing.get("state") != row["state"]:
+    if existing.get("state") != state:
         needs_update = True
 
     if not needs_update:
-        print(f"⏭️ No change: {row['property_name']}")
-        return
+        print(f"⏭️ No change: {name}")
+        return False
 
     payload = {
-        "name": row["property_name"],
-        "address": row["address"],
-        "city": row["city"],
-        "state": row["state"],
-        "zip": row["zip"],
+        "name": name,
+        "address": row["address"].strip(),
+        "city": city,
+        "state": state,
+        "zip": row["zip"].strip(),
     }
 
     loc_id = existing["id"]
@@ -162,30 +101,44 @@ def update_location(existing, row):
     )
 
     r.raise_for_status()
-    print(f"🔄 Updated: {row['property_name']}")
+    print(f"🔄 Updated: {name}")
+    return True
 
 
 # -------------------------------
 # Main sync logic
 # -------------------------------
 def main():
-    # Step 0: download latest AppFolio data
-    download_properties_csv()
-
     print("Fetching existing locations...")
     existing_locations = get_all_locations()
-    print(f"Found {len(existing_locations)} existing locations")
+    print(f"Found {len(existing_locations)} existing locations\n")
 
-    with open("properties.csv") as f:
+    created = 0
+    updated = 0
+    skipped = 0
+
+    with open("properties.csv", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
 
         for row in reader:
-            prop_id = row["property_id"]
+            prop_id = row["property_id"].strip()
+
+            if not prop_id:
+                continue
 
             if prop_id not in existing_locations:
                 create_location(row)
+                created += 1
             else:
-                update_location(existing_locations[prop_id], row)
+                if update_location(existing_locations[prop_id], row):
+                    updated += 1
+                else:
+                    skipped += 1
+
+    print("\nSummary:")
+    print(f"Created: {created}")
+    print(f"Updated: {updated}")
+    print(f"Skipped: {skipped}")
 
 
 if __name__ == "__main__":

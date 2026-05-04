@@ -61,6 +61,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# photo_sync state
+photo_sync/photo_sync_state.db
+photo_sync/.env
+
 # Flask stuff:
 instance/
 .webassets-cache

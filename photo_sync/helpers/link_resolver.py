@@ -1,15 +1,17 @@
 """Resolve URLs found in Snipe-IT notes to actual image bytes.
 
-Strategy (HTTP only — no headless browser):
+Two-tier strategy:
 
-1. Detect URLs in free-text notes.
-2. For each URL, follow redirects.
-3. If the final response is an image content-type, return its bytes.
-4. Otherwise parse the HTML for OpenGraph / Twitter / itemprop image tags
-   and download the first viable image we find.
-5. Special-case Google Photos and iCloud share pages, both of which embed
-   the image URL in og:image (or in some cases a thumbnail URL we have to
-   upgrade to a higher resolution).
+* **HTTP-only path** (default for most URLs): follow redirects, accept
+  direct image responses, otherwise parse HTML for OpenGraph / Twitter /
+  itemprop image tags. Fast and dependency-light.
+* **Playwright path** (used for known JavaScript-rendered hosts like
+  iCloud and Google Photos): launch headless Chromium, render the share
+  page, and grab the URL of the largest visible image.
+
+The HTTP path no longer falls back to "first <img> on the page" — that
+fallback was prone to grabbing site logos. JavaScript-heavy share pages
+must go through Playwright instead.
 
 This module is deliberately conservative: it returns None on any failure
 so the orchestrator can log and move on instead of crashing the run.
@@ -27,6 +29,18 @@ import requests
 from bs4 import BeautifulSoup
 
 log = logging.getLogger(__name__)
+
+# Hosts whose share pages render the actual photo via JavaScript. For
+# these, the initial HTML doesn't carry the real image URL, so we go
+# straight to Playwright.
+JS_RENDERED_HOSTS = {
+    "share.icloud.com",
+    "www.icloud.com",
+    "icloud.com",
+    "photos.app.goo.gl",
+    "photos.google.com",
+    "www.photos.google.com",
+}
 
 # Conservative URL extraction — captures http(s) URLs up to whitespace or
 # a small set of trailing punctuation that's almost certainly not part of
@@ -121,27 +135,42 @@ META_TAG_PRIORITY = [
 ]
 
 
-def _find_image_url_in_html(html: str, base_url: str) -> Optional[str]:
-    """Inspect an HTML document for the most-likely image URL."""
+def _find_image_url_in_html(html: str, base_url: str) -> Tuple[Optional[str], str]:
+    """Inspect an HTML document for the most-likely image URL.
+
+    Returns ``(image_url, selector_used)``. ``selector_used`` is a short
+    label like ``og:image`` or ``twitter:image`` for diagnostic logging,
+    or ``""`` if nothing matched.
+
+    Note: deliberately does NOT fall back to the first <img> tag — that
+    fallback was prone to grabbing site logos on JavaScript-heavy share
+    pages (iCloud, Google Photos). Those hosts go through Playwright.
+    """
     try:
         soup = BeautifulSoup(html, "html.parser")
     except Exception as exc:  # pragma: no cover — defensive
         log.warning("Failed to parse HTML for %s: %s", base_url, exc)
-        return None
+        return None, ""
 
     for tag_name, attrs, value_attr in META_TAG_PRIORITY:
         tag = soup.find(tag_name, attrs=attrs)
         if tag and tag.get(value_attr):
             candidate = tag.get(value_attr).strip()
             if candidate:
-                return urljoin(base_url, candidate)
+                # Build a label like "og:image" or "twitter:image" or "link[image_src]"
+                if tag_name == "link":
+                    label = f"link[{attrs.get('rel', '')}]"
+                else:
+                    key = (
+                        attrs.get("property")
+                        or attrs.get("name")
+                        or attrs.get("itemprop")
+                        or ""
+                    )
+                    label = key
+                return urljoin(base_url, candidate), label
 
-    # Last resort: first <img src>
-    img = soup.find("img")
-    if img and img.get("src"):
-        return urljoin(base_url, img["src"].strip())
-
-    return None
+    return None, ""
 
 
 # ---------------------------------------------------------------------- #
@@ -172,6 +201,121 @@ def _is_icloud_share(url: str) -> bool:
     return "icloud.com" in host
 
 
+def _is_js_rendered_host(url: str) -> bool:
+    host = urlparse(url).netloc.lower()
+    return host in JS_RENDERED_HOSTS or any(
+        host.endswith("." + h) for h in JS_RENDERED_HOSTS
+    )
+
+
+# ---------------------------------------------------------------------- #
+# Playwright path
+# ---------------------------------------------------------------------- #
+def _resolve_with_playwright(
+    url: str, *, timeout: int = 30
+) -> Optional[str]:
+    """Render the page in headless Chromium and return the largest image URL.
+
+    Returns the ``src`` URL of the largest visible <img> on the page after
+    JavaScript has loaded. We pick the largest image because share pages
+    typically render the actual photo as the dominant visual element while
+    site chrome (logos, icons) is much smaller.
+
+    Returns None if Playwright isn't installed, the page didn't load, or
+    no usable image was found.
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore
+    except ImportError:
+        log.warning(
+            "Playwright not installed; cannot resolve JS-rendered URL %s", url
+        )
+        return None
+
+    js = """
+        () => {
+            const imgs = Array.from(document.querySelectorAll('img'));
+            let best = null;
+            let bestArea = 0;
+            for (const img of imgs) {
+                const rect = img.getBoundingClientRect();
+                const area = rect.width * rect.height;
+                const src = img.currentSrc || img.src || '';
+                if (area > bestArea && src && !src.startsWith('data:')) {
+                    bestArea = area;
+                    best = src;
+                }
+            }
+            return best;
+        }
+    """
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                context = browser.new_context(
+                    user_agent=DEFAULT_HEADERS["User-Agent"],
+                    viewport={"width": 1280, "height": 1600},
+                )
+                page = context.new_page()
+                page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
+                # Give iCloud / Google Photos a moment to actually render
+                # the image after networkidle (they sometimes lazy-load).
+                try:
+                    page.wait_for_selector("img", state="visible", timeout=5_000)
+                except Exception:
+                    pass
+                page.wait_for_timeout(1_500)
+                largest = page.evaluate(js)
+                return largest
+            finally:
+                browser.close()
+    except Exception as exc:
+        log.warning("Playwright resolution failed for %s: %s", url, exc)
+        return None
+
+
+def _download_image(
+    image_url: str,
+    *,
+    referer: Optional[str] = None,
+    timeout: int = 30,
+    max_bytes: int = 50 * 1024 * 1024,
+) -> Optional[Tuple[bytes, str]]:
+    """Fetch image bytes from a direct URL. Returns (content, mime) or None."""
+    session = _build_session()
+    headers = {}
+    if referer:
+        headers["Referer"] = referer
+    try:
+        resp = session.get(
+            image_url,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=True,
+            stream=True,
+        )
+    except requests.RequestException as exc:
+        log.warning("GET %s (image) failed: %s", image_url, exc)
+        return None
+
+    is_image, mime = _is_image_response(resp)
+    if not is_image:
+        log.info(
+            "URL %s did not return an image (content-type: %s)",
+            image_url,
+            mime or "?",
+        )
+        resp.close()
+        return None
+
+    content = _read_capped(resp, max_bytes)
+    if content is None:
+        return None
+    return content, mime
+
+
 # ---------------------------------------------------------------------- #
 # Main resolver
 # ---------------------------------------------------------------------- #
@@ -180,16 +324,55 @@ def resolve_url(
     *,
     timeout: int = 30,
     max_bytes: int = 50 * 1024 * 1024,
+    use_playwright: bool = True,
 ) -> Optional[ResolvedImage]:
     """Resolve a URL to image bytes, or return None if it can't be resolved.
+
+    For known JavaScript-rendered hosts (iCloud, Google Photos shares),
+    we go through Playwright first since their initial HTML doesn't carry
+    the real image URL. For everything else, HTTP-only with an OpenGraph
+    fallback handles it cheaply.
 
     Args:
         url: A URL extracted from a Snipe-IT notes field.
         timeout: Per-request timeout in seconds.
         max_bytes: Hard cap on download size.
+        use_playwright: If False, skip the Playwright path entirely.
     """
-    session = _build_session()
+    js_host = _is_js_rendered_host(url)
 
+    # ------- Path 1: JS-rendered hosts go through Playwright first ------- #
+    if js_host and use_playwright:
+        log.info("Using Playwright for JS-rendered host: %s", url)
+        rendered_image_url = _resolve_with_playwright(url, timeout=timeout)
+        if rendered_image_url:
+            if _is_google_photos_share(url):
+                rendered_image_url = _upgrade_google_photos_url(rendered_image_url)
+            result = _download_image(
+                rendered_image_url,
+                referer=url,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+            if result:
+                content, mime = result
+                log.info(
+                    "Resolved %s via Playwright (image: %s, %d bytes)",
+                    url,
+                    rendered_image_url,
+                    len(content),
+                )
+                return ResolvedImage(
+                    source_url=url,
+                    final_url=rendered_image_url,
+                    content=content,
+                    mime_type=mime,
+                    extension=_ext_for_mime(mime),
+                )
+        log.warning("Playwright path yielded no image for %s; falling back to HTTP", url)
+
+    # ------- Path 2: HTTP-only --------- #
+    session = _build_session()
     try:
         resp = session.get(url, timeout=timeout, allow_redirects=True, stream=True)
     except requests.RequestException as exc:
@@ -203,6 +386,7 @@ def resolve_url(
         content = _read_capped(resp, max_bytes)
         if content is None:
             return None
+        log.info("Resolved %s as direct image (%d bytes)", url, len(content))
         return ResolvedImage(
             source_url=url,
             final_url=final_url,
@@ -220,40 +404,27 @@ def resolve_url(
     finally:
         resp.close()
 
-    image_url = _find_image_url_in_html(html, base_url=final_url)
+    image_url, selector = _find_image_url_in_html(html, base_url=final_url)
     if not image_url:
-        log.info("No image found in HTML at %s", final_url)
+        log.info("No image meta tag found in HTML at %s", final_url)
         return None
 
     if _is_google_photos_share(url):
         image_url = _upgrade_google_photos_url(image_url)
 
-    # iCloud's og:image already points at a CDN-hosted JPG, no rewrite needed.
-    _ = _is_icloud_share  # referenced for symmetry / future tweaks
-
-    try:
-        img_resp = session.get(
-            image_url, timeout=timeout, allow_redirects=True, stream=True
-        )
-    except requests.RequestException as exc:
-        log.warning("GET %s (image) failed: %s", image_url, exc)
+    result = _download_image(
+        image_url, referer=final_url, timeout=timeout, max_bytes=max_bytes
+    )
+    if not result:
         return None
-
-    is_image, mime = _is_image_response(img_resp)
-    if not is_image:
-        log.info(
-            "URL %s pointed to og:image %s but content-type was %s",
-            url,
-            image_url,
-            mime or "?",
-        )
-        img_resp.close()
-        return None
-
-    content = _read_capped(img_resp, max_bytes)
-    if content is None:
-        return None
-
+    content, mime = result
+    log.info(
+        "Resolved %s via HTML %s (image: %s, %d bytes)",
+        url,
+        selector,
+        image_url,
+        len(content),
+    )
     return ResolvedImage(
         source_url=url,
         final_url=image_url,

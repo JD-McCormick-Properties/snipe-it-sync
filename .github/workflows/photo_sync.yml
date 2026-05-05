@@ -31,6 +31,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('photo_sync/requirements.txt') }}
+
+      - name: Install Playwright Chromium
+        working-directory: photo_sync
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" != "true" ]; then
+            python -m playwright install --with-deps chromium
+          else
+            python -m playwright install-deps chromium
+          fi
+
       - name: Restore dedupe DB
         uses: actions/cache@v4
         with:
@@ -52,6 +68,7 @@ jobs:
           ONEDRIVE_BASE_FOLDER: ${{ vars.ONEDRIVE_BASE_FOLDER || 'AssetPhotos' }}
           WRITE_BACK_TO_SNIPEIT: ${{ vars.WRITE_BACK_TO_SNIPEIT || 'false' }}
           INCLUDE_HISTORY_NOTES: ${{ vars.INCLUDE_HISTORY_NOTES || 'true' }}
+          USE_PLAYWRIGHT: ${{ vars.USE_PLAYWRIGHT || 'true' }}
           FORCE_RESYNC: ${{ github.event.inputs.force || 'false' }}
           LOG_LEVEL: INFO
         run: python sync.py

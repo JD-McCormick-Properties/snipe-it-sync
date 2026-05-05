@@ -51,6 +51,7 @@ jobs:
           ONEDRIVE_DRIVE_ID: ${{ secrets.ONEDRIVE_DRIVE_ID }}
           ONEDRIVE_BASE_FOLDER: ${{ vars.ONEDRIVE_BASE_FOLDER || 'AssetPhotos' }}
           WRITE_BACK_TO_SNIPEIT: ${{ vars.WRITE_BACK_TO_SNIPEIT || 'false' }}
+          INCLUDE_HISTORY_NOTES: ${{ vars.INCLUDE_HISTORY_NOTES || 'true' }}
           FORCE_RESYNC: ${{ github.event.inputs.force || 'false' }}
           LOG_LEVEL: INFO
         run: python sync.py

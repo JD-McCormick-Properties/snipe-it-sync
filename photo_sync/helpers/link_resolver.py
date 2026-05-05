@@ -209,6 +209,227 @@ def _is_js_rendered_host(url: str) -> bool:
 
 
 # ---------------------------------------------------------------------- #
+# iCloud sharedstreams API
+# ---------------------------------------------------------------------- #
+# Apple's web app calls this API to enumerate and download photos from a
+# share. Talking to it directly is faster and more reliable than rendering
+# their share page in a headless browser (which they actively try to block).
+#
+# Flow:
+#   1. Parse the share token from the URL.
+#   2. Compute the API base URL from the token's first character.
+#   3. POST {"streamCtag": null} to /webstream → list of photos with
+#      derivatives (different size variants and their checksums).
+#   4. POST {"photoGuids": [...]} to /webasseturls → actual download URLs.
+#   5. GET the download URL with a normal HTTP request.
+#
+# A 330 response carries an X-Apple-MMe-Host header; we follow it to the
+# correct partition and retry the call.
+ICLOUD_BASE62 = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+)
+ICLOUD_TOKEN_RE = re.compile(
+    r"https?://(?:www\.)?share\.icloud\.com/photos/([A-Za-z0-9_\-]+)",
+    re.IGNORECASE,
+)
+
+
+def _icloud_token_from_url(url: str) -> Optional[str]:
+    m = ICLOUD_TOKEN_RE.match(url)
+    return m.group(1) if m else None
+
+
+def _icloud_base_api_url(token: str) -> Optional[str]:
+    """Compute the iCloud sharedstreams API base URL from a share token.
+
+    The first character of the token, base62-decoded, is the server
+    partition number. Apple zero-pads partitions below 40.
+    """
+    if not token or token[0] not in ICLOUD_BASE62:
+        return None
+    partition = ICLOUD_BASE62.index(token[0])
+    server_num = partition + 1
+    host = (
+        f"p{server_num:02d}-sharedstreams.icloud.com"
+        if server_num < 40
+        else f"p{server_num}-sharedstreams.icloud.com"
+    )
+    return f"https://{host}/{token}/sharedstreams"
+
+
+def _icloud_post(
+    api_url: str, body: dict, *, timeout: int = 30, max_redirects: int = 3
+) -> Optional[dict]:
+    """POST JSON to an iCloud sharedstreams endpoint, following 330 redirects.
+
+    iCloud returns 330 when we hit the wrong partition, with a
+    ``X-Apple-MMe-Host`` header (or a body field) telling us where to go.
+    """
+    headers = {
+        "Origin": "https://www.icloud.com",
+        "Referer": "https://www.icloud.com/",
+        "User-Agent": DEFAULT_HEADERS["User-Agent"],
+        "Content-Type": "text/plain",
+    }
+    for _ in range(max_redirects):
+        try:
+            r = requests.post(
+                api_url,
+                headers=headers,
+                json=body,
+                timeout=timeout,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            log.warning("iCloud POST %s failed: %s", api_url, exc)
+            return None
+
+        if r.status_code == 330:
+            new_host = r.headers.get("X-Apple-MMe-Host")
+            if not new_host:
+                try:
+                    new_host = (r.json() or {}).get("X-Apple-MMe-Host")
+                except Exception:
+                    new_host = None
+            if not new_host:
+                log.warning(
+                    "iCloud %s returned 330 without redirect host", api_url
+                )
+                return None
+            api_url = re.sub(
+                r"https?://[^/]+", f"https://{new_host}", api_url, count=1
+            )
+            log.info("iCloud redirected to %s", new_host)
+            continue
+
+        if r.status_code == 200:
+            try:
+                return r.json()
+            except Exception as exc:
+                log.warning("iCloud %s returned non-JSON: %s", api_url, exc)
+                return None
+
+        log.warning(
+            "iCloud %s returned status %d (body: %s)",
+            api_url,
+            r.status_code,
+            r.text[:200],
+        )
+        return None
+
+    log.warning("iCloud %s exceeded %d redirects", api_url, max_redirects)
+    return None
+
+
+def _resolve_icloud_share(
+    url: str, *, timeout: int = 30
+) -> Optional[Tuple[str, str]]:
+    """Resolve an iCloud share URL via Apple's sharedstreams API.
+
+    Returns ``(image_url, mime_type)`` for the largest derivative of the
+    first photo in the share, or None on failure. iCloud shares can hold
+    multiple photos; for now we take the first one (and log a warning if
+    there are more).
+    """
+    token = _icloud_token_from_url(url)
+    if not token:
+        log.warning("Could not extract token from iCloud URL: %s", url)
+        return None
+
+    base = _icloud_base_api_url(token)
+    if not base:
+        log.warning("Could not derive API URL for iCloud token %r", token)
+        return None
+
+    log.info("Calling iCloud sharedstreams API for token %s…", token[:8])
+
+    stream = _icloud_post(
+        f"{base}/webstream", {"streamCtag": None}, timeout=timeout
+    )
+    if not stream:
+        return None
+
+    photos = stream.get("photos") or []
+    if not photos:
+        log.warning("iCloud webstream returned no photos for %s", url)
+        return None
+
+    if len(photos) > 1:
+        log.info(
+            "iCloud share contains %d photos; only the first will be uploaded "
+            "(album mode not yet supported)",
+            len(photos),
+        )
+
+    photo = photos[0]
+    derivatives = photo.get("derivatives") or {}
+    if not derivatives:
+        log.warning("iCloud photo has no derivatives")
+        return None
+
+    # Pick the derivative with the largest fileSize (highest resolution).
+    best_key = None
+    best_size = -1
+    for key, deriv in derivatives.items():
+        try:
+            size = int(deriv.get("fileSize") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if size > best_size:
+            best_size = size
+            best_key = key
+
+    if not best_key:
+        log.warning("iCloud derivatives had no usable fileSize")
+        return None
+
+    photo_guid = photo.get("photoGuid")
+    if not photo_guid:
+        log.warning("iCloud photo missing photoGuid")
+        return None
+
+    asset_resp = _icloud_post(
+        f"{base}/webasseturls",
+        {"photoGuids": [photo_guid]},
+        timeout=timeout,
+    )
+    if not asset_resp:
+        return None
+
+    items = asset_resp.get("items") or {}
+    locations = asset_resp.get("locations") or {}
+    if not items or not locations:
+        log.warning("iCloud webasseturls response missing items/locations")
+        return None
+
+    # The 'items' dict is keyed by the derivative checksum. Find the one
+    # matching our chosen size; fall back to the first item.
+    target_checksum = derivatives[best_key].get("checksum")
+    item = items.get(target_checksum) if target_checksum else None
+    if not item and items:
+        target_checksum = next(iter(items))
+        item = items[target_checksum]
+    if not item:
+        return None
+
+    url_path = item.get("url_path")
+    url_loc_id = item.get("url_location")
+    if not url_path or not url_loc_id:
+        log.warning("iCloud item missing url_path/url_location")
+        return None
+
+    location = locations.get(url_loc_id) or {}
+    scheme = location.get("scheme") or "https"
+    hosts = location.get("hosts") or []
+    if not hosts:
+        log.warning("iCloud location has no hosts")
+        return None
+
+    download_url = f"{scheme}://{hosts[0]}{url_path}"
+    return download_url, "image/jpeg"
+
+
+# ---------------------------------------------------------------------- #
 # Playwright path
 # ---------------------------------------------------------------------- #
 def _resolve_with_playwright(
@@ -379,6 +600,39 @@ def resolve_url(
     # logo grab and reject. 50 KB is a generous floor — even a small
     # phone photo at modest quality is several hundred KB.
     min_real_photo_bytes = 50 * 1024
+
+    # ------- Path 0: iCloud direct API (preferred for share.icloud.com) - #
+    if _is_icloud_share(url):
+        icloud_result = _resolve_icloud_share(url, timeout=timeout)
+        if icloud_result:
+            image_url, mime_hint = icloud_result
+            result = _download_image(
+                image_url, referer=url, timeout=timeout, max_bytes=max_bytes
+            )
+            if result:
+                content, mime = result
+                if len(content) >= min_real_photo_bytes:
+                    log.info(
+                        "Resolved %s via iCloud API (image: %s, %d bytes)",
+                        url,
+                        image_url,
+                        len(content),
+                    )
+                    return ResolvedImage(
+                        source_url=url,
+                        final_url=image_url,
+                        content=content,
+                        mime_type=mime or mime_hint,
+                        extension=_ext_for_mime(mime or mime_hint),
+                    )
+                log.warning(
+                    "iCloud API returned %s for %s but only %d bytes; falling "
+                    "through to Playwright",
+                    image_url,
+                    url,
+                    len(content),
+                )
+        log.info("iCloud API path didn't yield a photo; trying Playwright")
 
     # ------- Path 1: JS-rendered hosts go through Playwright (only) ------ #
     if js_host and use_playwright:

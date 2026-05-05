@@ -72,6 +72,7 @@ class Config:
     onedrive_base_folder: str
     write_back: bool
     force_resync: bool
+    include_history_notes: bool
     db_path: str
     log_level: str
 
@@ -100,6 +101,9 @@ def load_config() -> Config:
         or "AssetPhotos",
         write_back=_truthy(os.environ.get("WRITE_BACK_TO_SNIPEIT", "false")),
         force_resync=_truthy(os.environ.get("FORCE_RESYNC", "false")),
+        include_history_notes=_truthy(
+            os.environ.get("INCLUDE_HISTORY_NOTES", "true")
+        ),
         db_path=os.environ.get("DEDUPE_DB_PATH", "photo_sync_state.db").strip()
         or "photo_sync_state.db",
         log_level=os.environ.get("LOG_LEVEL", "INFO").strip() or "INFO",
@@ -131,13 +135,57 @@ def process_asset(
     info = summarize_asset(asset)
     asset_id = info["id"]
     asset_tag = info["asset_tag"] or f"id-{asset_id}"
+    asset_name = info["name"] or asset_tag
     notes = info["notes"]
 
     urls = extract_urls(notes)
+    # Per-URL provenance: who/when, captured so we can write a useful
+    # description into OneDrive. URLs from the top-level notes field
+    # have no specific uploader.
+    url_sources: dict = {u: {"uploader": "", "date": ""} for u in urls}
+    history_url_count = 0
+
+    # Many techs paste photo links into individual check-in / check-out
+    # notes (the asset's "history" tab) rather than the top-level notes
+    # field. Pull those in too if the flag is on.
+    if cfg.include_history_notes:
+        seen = set(urls)
+        try:
+            for entry in snipe.iter_asset_activity(asset_id):
+                entry_note = entry.get("note") or entry.get("notes") or ""
+                if not entry_note:
+                    continue
+                uploader = _extract_uploader_name(entry)
+                entry_date = _extract_entry_date(entry)
+                for u in extract_urls(entry_note):
+                    if u not in seen:
+                        seen.add(u)
+                        urls.append(u)
+                        url_sources[u] = {
+                            "uploader": uploader,
+                            "date": entry_date,
+                        }
+                        history_url_count += 1
+        except Exception as exc:
+            log.warning(
+                "Could not fetch activity log for asset %s: %s", asset_id, exc
+            )
+
     if not urls:
         return []
 
-    log.info("Asset %s (%s): found %d URL(s)", asset_id, asset_tag, len(urls))
+    if history_url_count:
+        log.info(
+            "Asset %s (%s): %d URL(s) (%d from history notes)",
+            asset_id,
+            asset_tag,
+            len(urls),
+            history_url_count,
+        )
+    else:
+        log.info(
+            "Asset %s (%s): found %d URL(s)", asset_id, asset_tag, len(urls)
+        )
 
     safe_tag = safe_asset_tag(asset_tag)
     folder = drive.asset_folder(safe_tag)
@@ -190,10 +238,22 @@ def process_asset(
         ) + 1
         filename = build_filename(safe_tag, index, ext)
 
+        description = _build_file_description(
+            asset_name=asset_name,
+            asset_tag=asset_tag,
+            source_url=url,
+            uploader=url_sources.get(url, {}).get("uploader", ""),
+            entry_date=url_sources.get(url, {}).get("date", ""),
+        )
+
         log.info("  [%d] uploading %s (%d bytes)", i, filename, len(content))
         try:
             file_id, web_url = drive.upload_small_file(
-                folder, filename, content, content_type=mime
+                folder,
+                filename,
+                content,
+                content_type=mime,
+                description=description,
             )
         except Exception as exc:
             log.exception("  [%d] upload failed for %s: %s", i, url, exc)
@@ -224,6 +284,73 @@ def process_asset(
                 log.warning("Notes writeback failed for asset %s: %s", asset_id, exc)
 
     return results
+
+
+def _extract_uploader_name(entry: dict) -> str:
+    """Pull a human-friendly uploader name from a Snipe-IT activity entry.
+
+    Activity entries put the actor under varying field names depending on
+    the Snipe-IT version: ``admin``, ``created_by``, or ``user``. Each can
+    be a dict with name fields or just a string.
+    """
+    for key in ("admin", "created_by", "user"):
+        actor = entry.get(key)
+        if isinstance(actor, dict):
+            return (
+                actor.get("name")
+                or " ".join(
+                    p
+                    for p in (actor.get("first_name"), actor.get("last_name"))
+                    if p
+                ).strip()
+                or actor.get("username")
+                or ""
+            )
+        if isinstance(actor, str) and actor.strip():
+            return actor.strip()
+    return ""
+
+
+def _extract_entry_date(entry: dict) -> str:
+    """Best-effort human-readable date for a Snipe-IT activity entry."""
+    for key in ("created_at", "action_date", "updated_at"):
+        val = entry.get(key)
+        if isinstance(val, dict):
+            return (val.get("formatted") or val.get("datetime") or "").strip()
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+def _build_file_description(
+    *,
+    asset_name: str,
+    asset_tag: str,
+    source_url: str,
+    uploader: str,
+    entry_date: str,
+) -> str:
+    """Compose the description we attach to an uploaded OneDrive file.
+
+    Format (parts dropped if empty):
+      Asset: {name} ({tag}) | Uploaded by: {user} | Date: {date} | Source: {url}
+    """
+    parts: List[str] = []
+    if asset_name and asset_tag and asset_name != asset_tag:
+        parts.append(f"Asset: {asset_name} ({asset_tag})")
+    elif asset_tag:
+        parts.append(f"Asset: {asset_tag}")
+    elif asset_name:
+        parts.append(f"Asset: {asset_name}")
+    if uploader:
+        parts.append(f"Uploaded by: {uploader}")
+    if entry_date:
+        parts.append(f"Date: {entry_date}")
+    if source_url:
+        parts.append(f"Source: {source_url}")
+    # OneDrive caps description at 1024 chars; keep some headroom.
+    desc = " | ".join(parts)
+    return desc[:1000]
 
 
 def _append_writeback(notes: str, results: List[UploadResult]) -> str:

@@ -120,6 +120,49 @@ class SnipeITClient:
     def get_asset(self, asset_id: int) -> Dict[str, Any]:
         return self._request("GET", f"/api/v1/hardware/{asset_id}")
 
+    def iter_asset_activity(
+        self, asset_id: int, page_size: int = 100
+    ) -> Iterator[Dict[str, Any]]:
+        """Yield activity-log entries for a single hardware asset.
+
+        Snipe-IT records check-outs, check-ins, edits, and other actions
+        in /api/v1/reports/activity. Each entry can carry its own ``note``
+        field, which is where many techs paste photo links — separate from
+        the asset's top-level ``notes`` field.
+
+        We filter to ``item_type=asset`` so we only get hardware activity.
+        """
+        offset = 0
+        total: Optional[int] = None
+
+        while True:
+            data = self._request(
+                "GET",
+                "/api/v1/reports/activity",
+                params={
+                    "item_type": "asset",
+                    "item_id": asset_id,
+                    "limit": page_size,
+                    "offset": offset,
+                },
+            )
+            rows: List[Dict[str, Any]] = data.get("rows", []) or []
+            if total is None:
+                total = data.get("total")
+
+            if not rows:
+                break
+
+            for row in rows:
+                yield row
+
+            offset += len(rows)
+
+            if total is not None and offset >= total:
+                break
+            if len(rows) < page_size:
+                break
+
     def update_notes(self, asset_id: int, new_notes: str) -> Dict[str, Any]:
         """Patch the notes field on a hardware asset.
 

@@ -167,14 +167,21 @@ class OneDriveClient:
         filename: str,
         content: bytes,
         content_type: str = "application/octet-stream",
+        description: Optional[str] = None,
     ) -> Tuple[str, str]:
         """Upload up to ~4 MB via simple PUT. Returns (file_id, web_url).
+
+        If ``description`` is provided, it's set on the resulting drive
+        item via a follow-up PATCH (Graph doesn't allow setting metadata
+        in the PUT-content call itself).
 
         For larger files, switch to upload sessions; current asset photos
         are well within this limit.
         """
         if len(content) > 4 * 1024 * 1024:
-            return self._upload_large_file(folder_path, filename, content, content_type)
+            return self._upload_large_file(
+                folder_path, filename, content, content_type, description=description
+            )
 
         path = f"{folder_path.strip('/')}/{filename}"
         url = f"{self._path_url(path)}:/content"
@@ -186,7 +193,35 @@ class OneDriveClient:
         )
         r.raise_for_status()
         data = r.json()
-        return data.get("id", ""), data.get("webUrl", "")
+        file_id = data.get("id", "")
+        web_url = data.get("webUrl", "")
+
+        if description and file_id:
+            self._set_item_metadata(file_id, {"description": description})
+
+        return file_id, web_url
+
+    def _set_item_metadata(self, file_id: str, fields: Dict[str, Any]) -> None:
+        """PATCH a driveItem to update fields like description."""
+        if self.drive_id:
+            url = f"{GRAPH_BASE}/drives/{self.drive_id}/items/{file_id}"
+        else:
+            url = (
+                f"{GRAPH_BASE}/users/{quote(self.user_id, safe='@')}"
+                f"/drive/items/{file_id}"
+            )
+        try:
+            r = requests.patch(
+                url,
+                headers=self._headers("application/json"),
+                json=fields,
+                timeout=self.timeout,
+            )
+            r.raise_for_status()
+        except Exception as exc:
+            log.warning(
+                "Failed to set metadata on driveItem %s: %s", file_id, exc
+            )
 
     def _upload_large_file(
         self,
@@ -194,6 +229,7 @@ class OneDriveClient:
         filename: str,
         content: bytes,
         content_type: str,
+        description: Optional[str] = None,
     ) -> Tuple[str, str]:
         """Upload via Graph upload session (chunked) for files >4 MB."""
         path = f"{folder_path.strip('/')}/{filename}"
@@ -234,7 +270,11 @@ class OneDriveClient:
                 r.raise_for_status()
             offset = end + 1
 
-        return last_json.get("id", ""), last_json.get("webUrl", "")
+        file_id = last_json.get("id", "")
+        web_url = last_json.get("webUrl", "")
+        if description and file_id:
+            self._set_item_metadata(file_id, {"description": description})
+        return file_id, web_url
 
     def asset_folder(self, asset_tag: str) -> str:
         """Folder path used for a given asset tag (relative to drive root)."""

@@ -133,7 +133,11 @@ class OneDriveClient:
             payload = {
                 "name": seg,
                 "folder": {},
-                "@microsoft.graph.conflictBehavior": "replace",
+                # 'fail' is intentional: we only POST after a 404, so any
+                # conflict here means our existence check disagreed with
+                # reality and we'd rather see a loud error than risk
+                # touching a pre-existing folder on a shared drive.
+                "@microsoft.graph.conflictBehavior": "fail",
             }
             cr = requests.post(
                 create_url,

@@ -73,6 +73,7 @@ class Config:
     write_back: bool
     force_resync: bool
     include_history_notes: bool
+    use_playwright: bool
     db_path: str
     log_level: str
 
@@ -104,6 +105,7 @@ def load_config() -> Config:
         include_history_notes=_truthy(
             os.environ.get("INCLUDE_HISTORY_NOTES", "true")
         ),
+        use_playwright=_truthy(os.environ.get("USE_PLAYWRIGHT", "true")),
         db_path=os.environ.get("DEDUPE_DB_PATH", "photo_sync_state.db").strip()
         or "photo_sync_state.db",
         log_level=os.environ.get("LOG_LEVEL", "INFO").strip() or "INFO",
@@ -203,7 +205,7 @@ def process_asset(
             continue
 
         log.info("  [%d] resolving %s", i, url)
-        resolved = resolve_url(url)
+        resolved = resolve_url(url, use_playwright=cfg.use_playwright)
         if not resolved:
             log.warning("  [%d] could not resolve %s", i, url)
             results.append(

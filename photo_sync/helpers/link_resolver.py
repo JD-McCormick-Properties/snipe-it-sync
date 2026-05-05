@@ -212,14 +212,20 @@ def _is_js_rendered_host(url: str) -> bool:
 # Playwright path
 # ---------------------------------------------------------------------- #
 def _resolve_with_playwright(
-    url: str, *, timeout: int = 30
+    url: str, *, timeout: int = 60
 ) -> Optional[str]:
     """Render the page in headless Chromium and return the largest image URL.
 
-    Returns the ``src`` URL of the largest visible <img> on the page after
-    JavaScript has loaded. We pick the largest image because share pages
-    typically render the actual photo as the dominant visual element while
-    site chrome (logos, icons) is much smaller.
+    Returns the URL of the largest visible image on the page after the SPA
+    has had a chance to render. We look at both <img> tags and CSS
+    ``background-image`` declarations, because some hosts (notably iCloud
+    shared streams) render photos as background images on <div>s rather
+    than as <img> tags.
+
+    Important: we do NOT use ``networkidle`` to detect "page is ready" —
+    iCloud and similar hosts hold open long-polling / streaming requests
+    that prevent networkidle from ever firing. Instead we wait for the
+    DOM to be parsed and then settle for a fixed delay.
 
     Returns None if Playwright isn't installed, the page didn't load, or
     no usable image was found.
@@ -232,42 +238,69 @@ def _resolve_with_playwright(
         )
         return None
 
-    js = """
+    # JS that scans the rendered DOM and returns the URL of the largest
+    # visible image. Handles both <img> elements and CSS background-image.
+    extract_js = """
         () => {
-            const imgs = Array.from(document.querySelectorAll('img'));
-            let best = null;
-            let bestArea = 0;
-            for (const img of imgs) {
+            const seen = new Set();
+            const candidates = [];
+
+            // Real <img> tags
+            for (const img of document.querySelectorAll('img')) {
                 const rect = img.getBoundingClientRect();
                 const area = rect.width * rect.height;
                 const src = img.currentSrc || img.src || '';
-                if (area > bestArea && src && !src.startsWith('data:')) {
-                    bestArea = area;
-                    best = src;
+                if (src && !src.startsWith('data:') && !seen.has(src) && area > 100) {
+                    seen.add(src);
+                    candidates.push({ src, area });
                 }
             }
-            return best;
+
+            // CSS background-image (iCloud renders photos this way)
+            for (const el of document.querySelectorAll('div, span, section, a, figure, picture')) {
+                try {
+                    const bg = window.getComputedStyle(el).backgroundImage;
+                    const m = bg && bg.match(/url\\(["']?(.+?)["']?\\)/);
+                    if (m && m[1] && !m[1].startsWith('data:') && !seen.has(m[1])) {
+                        const rect = el.getBoundingClientRect();
+                        const area = rect.width * rect.height;
+                        if (area > 100) {
+                            seen.add(m[1]);
+                            candidates.push({ src: m[1], area });
+                        }
+                    }
+                } catch (e) {}
+            }
+
+            candidates.sort((a, b) => b.area - a.area);
+            return candidates.length ? candidates[0].src : null;
         }
     """
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
             try:
                 context = browser.new_context(
                     user_agent=DEFAULT_HEADERS["User-Agent"],
-                    viewport={"width": 1280, "height": 1600},
+                    viewport={"width": 1440, "height": 900},
                 )
                 page = context.new_page()
-                page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
-                # Give iCloud / Google Photos a moment to actually render
-                # the image after networkidle (they sometimes lazy-load).
-                try:
-                    page.wait_for_selector("img", state="visible", timeout=5_000)
-                except Exception:
-                    pass
-                page.wait_for_timeout(1_500)
-                largest = page.evaluate(js)
+                # 'domcontentloaded' fires as soon as the HTML is parsed,
+                # without waiting for ongoing network activity. iCloud's
+                # streaming requests would otherwise prevent networkidle.
+                page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=timeout * 1000,
+                )
+                # Let the SPA render. iCloud needs a generous window
+                # because it makes its photo API call after page load.
+                page.wait_for_timeout(10_000)
+                largest = page.evaluate(extract_js)
                 return largest
             finally:
                 browser.close()
@@ -341,10 +374,16 @@ def resolve_url(
     """
     js_host = _is_js_rendered_host(url)
 
-    # ------- Path 1: JS-rendered hosts go through Playwright first ------- #
+    # Photos are typically much bigger than UI chrome / logos. If
+    # Playwright (or any path) returns something tiny, treat it as a
+    # logo grab and reject. 50 KB is a generous floor — even a small
+    # phone photo at modest quality is several hundred KB.
+    min_real_photo_bytes = 50 * 1024
+
+    # ------- Path 1: JS-rendered hosts go through Playwright (only) ------ #
     if js_host and use_playwright:
         log.info("Using Playwright for JS-rendered host: %s", url)
-        rendered_image_url = _resolve_with_playwright(url, timeout=timeout)
+        rendered_image_url = _resolve_with_playwright(url, timeout=60)
         if rendered_image_url:
             if _is_google_photos_share(url):
                 rendered_image_url = _upgrade_google_photos_url(rendered_image_url)
@@ -356,20 +395,38 @@ def resolve_url(
             )
             if result:
                 content, mime = result
-                log.info(
-                    "Resolved %s via Playwright (image: %s, %d bytes)",
-                    url,
-                    rendered_image_url,
-                    len(content),
-                )
-                return ResolvedImage(
-                    source_url=url,
-                    final_url=rendered_image_url,
-                    content=content,
-                    mime_type=mime,
-                    extension=_ext_for_mime(mime),
-                )
-        log.warning("Playwright path yielded no image for %s; falling back to HTTP", url)
+                if len(content) < min_real_photo_bytes:
+                    log.warning(
+                        "Playwright returned %s for %s but it's only %d bytes "
+                        "(likely a logo / UI asset); rejecting",
+                        rendered_image_url,
+                        url,
+                        len(content),
+                    )
+                else:
+                    log.info(
+                        "Resolved %s via Playwright (image: %s, %d bytes)",
+                        url,
+                        rendered_image_url,
+                        len(content),
+                    )
+                    return ResolvedImage(
+                        source_url=url,
+                        final_url=rendered_image_url,
+                        content=content,
+                        mime_type=mime,
+                        extension=_ext_for_mime(mime),
+                    )
+        # JS-rendered hosts (iCloud, Google Photos) deliberately serve
+        # branding-only og:image meta tags, so an HTTP fallback would
+        # download the wrong thing. Fail cleanly instead.
+        log.warning(
+            "Could not resolve %s — Playwright did not yield a usable photo and "
+            "HTTP fallback is disabled for this host (its og:image points to a "
+            "logo). The share may be private, expired, or require sign-in.",
+            url,
+        )
+        return None
 
     # ------- Path 2: HTTP-only --------- #
     session = _build_session()

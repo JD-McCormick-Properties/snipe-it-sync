@@ -429,6 +429,80 @@ def _resolve_icloud_share(
     return download_url, "image/jpeg"
 
 
+def _dump_icloud_debug(page, url: str, *, reason: str) -> None:
+    """Dump page state to ``_debug/`` when iCloud resolution fails.
+
+    Writes a PNG screenshot and a JSON file listing all visible clickable
+    elements. The workflow uploads ``_debug/`` as an artifact so we can
+    inspect what iCloud actually rendered to headless Chromium.
+    """
+    import json
+    import os
+    import time as _time
+
+    try:
+        debug_dir = os.path.join(os.getcwd(), "_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        stamp = _time.strftime("%Y%m%d-%H%M%S")
+        png_path = os.path.join(debug_dir, f"icloud-{stamp}.png")
+        json_path = os.path.join(debug_dir, f"icloud-{stamp}.json")
+
+        # Screenshot — useful even if the rest fails.
+        try:
+            page.screenshot(path=png_path, full_page=True)
+        except Exception as exc:
+            log.warning("debug screenshot failed: %s", exc)
+
+        # Enumerate clickable / interesting elements with their visible text.
+        info = {}
+        try:
+            info["clickables"] = page.evaluate(
+                """
+                () => {
+                    const out = [];
+                    const els = document.querySelectorAll(
+                        'button, [role="button"], a, input[type="submit"]'
+                    );
+                    for (const el of Array.from(els).slice(0, 60)) {
+                        const r = el.getBoundingClientRect();
+                        out.push({
+                            tag: el.tagName,
+                            role: el.getAttribute('role'),
+                            text: (el.innerText || el.textContent || '').trim().slice(0, 80),
+                            href: el.getAttribute('href') || '',
+                            visible: r.width > 0 && r.height > 0,
+                            rect: { w: Math.round(r.width), h: Math.round(r.height) }
+                        });
+                    }
+                    return out;
+                }
+                """
+            )
+        except Exception as exc:
+            info["clickables_error"] = str(exc)
+
+        try:
+            info["title"] = page.title()
+            info["final_url"] = page.url
+        except Exception:
+            pass
+
+        info["reason"] = reason
+        info["source_url"] = url
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(info, f, indent=2)
+
+        log.warning(
+            "iCloud resolution failed (%s); wrote diagnostics to %s and %s",
+            reason,
+            png_path,
+            json_path,
+        )
+    except Exception as exc:
+        log.warning("Could not write iCloud debug dump: %s", exc)
+
+
 def _resolve_icloud_link_download(
     url: str, *, timeout: int = 90
 ) -> Optional[Tuple[bytes, str, str]]:
@@ -449,18 +523,49 @@ def _resolve_icloud_link_download(
         )
         return None
 
+    # Stealth init script — iCloud actively detects headless browsers. The
+    # main signal is navigator.webdriver === true; we hide that plus a few
+    # related fingerprinting traces. Doesn't make us undetectable, but is
+    # enough to get past iCloud's first-pass checks in most cases.
+    stealth_init = """
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en']
+        });
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [1, 2, 3, 4, 5]
+        });
+        window.chrome = window.chrome || { runtime: {} };
+        const origQuery = window.navigator.permissions && window.navigator.permissions.query;
+        if (origQuery) {
+            window.navigator.permissions.query = (params) => (
+                params && params.name === 'notifications'
+                    ? Promise.resolve({ state: Notification.permission })
+                    : origQuery(params)
+            );
+        }
+    """
+
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
-                args=["--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
             )
             try:
                 context = browser.new_context(
                     user_agent=DEFAULT_HEADERS["User-Agent"],
                     viewport={"width": 1440, "height": 900},
+                    locale="en-US",
+                    timezone_id="America/Chicago",
                     accept_downloads=True,
                 )
+                context.add_init_script(stealth_init)
                 page = context.new_page()
                 page.goto(
                     url,
@@ -469,7 +574,7 @@ def _resolve_icloud_link_download(
                 )
                 # Let the SPA render. iCloud's web app builds the page
                 # asynchronously after load.
-                page.wait_for_timeout(5_000)
+                page.wait_for_timeout(7_000)
 
                 # Find the Download button. iCloud renders it as a styled
                 # <button> with text "Download" in English. We use a
@@ -478,20 +583,18 @@ def _resolve_icloud_link_download(
                     download_btn = page.wait_for_selector(
                         'button:has-text("Download"), '
                         'a:has-text("Download"), '
-                        '[role="button"]:has-text("Download")',
-                        timeout=20_000,
+                        '[role="button"]:has-text("Download"), '
+                        'button:has-text("Save"), '
+                        '[role="button"]:has-text("Save")',
+                        timeout=25_000,
                         state="visible",
                     )
                 except Exception as exc:
-                    log.warning(
-                        "Download button not found on iCloud share %s: %s",
-                        url,
-                        exc,
-                    )
+                    _dump_icloud_debug(page, url, reason=f"button-timeout: {exc}")
                     return None
 
                 if download_btn is None:
-                    log.warning("Download button selector matched nothing on %s", url)
+                    _dump_icloud_debug(page, url, reason="button-selector-missed")
                     return None
 
                 # Click and wait for the download event.

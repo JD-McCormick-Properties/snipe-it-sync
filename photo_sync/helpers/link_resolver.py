@@ -429,8 +429,148 @@ def _resolve_icloud_share(
     return download_url, "image/jpeg"
 
 
+def _resolve_icloud_link_download(
+    url: str, *, timeout: int = 90
+) -> Optional[Tuple[bytes, str, str]]:
+    """Resolve a newer-format iCloud Link share by clicking the Download button.
+
+    Apple's newer "Copy iCloud Link" feature (URLs that redirect to
+    /photos/#/icloudlinks/...) uses an API we can't talk to directly, but
+    the share page has a visible Download button. We drive that button
+    via Playwright and capture the resulting download.
+
+    Returns ``(bytes, mime_type, extension)`` or None on failure.
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore
+    except ImportError:
+        log.warning(
+            "Playwright not installed; cannot drive iCloud download for %s", url
+        )
+        return None
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            try:
+                context = browser.new_context(
+                    user_agent=DEFAULT_HEADERS["User-Agent"],
+                    viewport={"width": 1440, "height": 900},
+                    accept_downloads=True,
+                )
+                page = context.new_page()
+                page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=timeout * 1000,
+                )
+                # Let the SPA render. iCloud's web app builds the page
+                # asynchronously after load.
+                page.wait_for_timeout(5_000)
+
+                # Find the Download button. iCloud renders it as a styled
+                # <button> with text "Download" in English. We use a
+                # text-based selector to stay resilient to class changes.
+                try:
+                    download_btn = page.wait_for_selector(
+                        'button:has-text("Download"), '
+                        'a:has-text("Download"), '
+                        '[role="button"]:has-text("Download")',
+                        timeout=20_000,
+                        state="visible",
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "Download button not found on iCloud share %s: %s",
+                        url,
+                        exc,
+                    )
+                    return None
+
+                if download_btn is None:
+                    log.warning("Download button selector matched nothing on %s", url)
+                    return None
+
+                # Click and wait for the download event.
+                try:
+                    with page.expect_download(timeout=timeout * 1000) as dl_info:
+                        download_btn.click()
+                    download = dl_info.value
+                except Exception as exc:
+                    log.warning(
+                        "Clicking Download on %s did not produce a download: %s",
+                        url,
+                        exc,
+                    )
+                    return None
+
+                # Persist to a temp path and read bytes. (Playwright won't
+                # hand us the bytes directly — it streams to disk.)
+                import os
+                import tempfile
+
+                suggested = download.suggested_filename or "photo.jpg"
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=f"_{suggested}"
+                ) as tmp:
+                    tmp_path = tmp.name
+                try:
+                    download.save_as(tmp_path)
+                    with open(tmp_path, "rb") as f:
+                        content = f.read()
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+                ext = (
+                    suggested.rsplit(".", 1)[-1].lower() if "." in suggested else "jpg"
+                )
+                mime = {
+                    "jpg": "image/jpeg",
+                    "jpeg": "image/jpeg",
+                    "png": "image/png",
+                    "heic": "image/heic",
+                    "heif": "image/heic",
+                    "gif": "image/gif",
+                    "webp": "image/webp",
+                    "zip": "application/zip",
+                }.get(ext, "image/jpeg")
+
+                log.info(
+                    "Downloaded iCloud link %s as %s (%d bytes)",
+                    url,
+                    suggested,
+                    len(content),
+                )
+
+                # We don't currently unpack ZIPs (multi-photo shares). If
+                # the user shares more than one photo, the Download button
+                # gives us a ZIP — for now we skip those with a clear log.
+                if mime == "application/zip":
+                    log.warning(
+                        "iCloud share %s contains multiple photos; ZIP archive "
+                        "downloads aren't supported yet, skipping",
+                        url,
+                    )
+                    return None
+
+                return content, mime, ext
+            finally:
+                browser.close()
+    except Exception as exc:
+        log.warning(
+            "Playwright-driven iCloud download failed for %s: %s", url, exc
+        )
+        return None
+
+
 # ---------------------------------------------------------------------- #
-# Playwright path
+# Playwright path (generic — for non-iCloud JS-rendered hosts)
 # ---------------------------------------------------------------------- #
 def _resolve_with_playwright(
     url: str, *, timeout: int = 60
@@ -601,7 +741,7 @@ def resolve_url(
     # phone photo at modest quality is several hundred KB.
     min_real_photo_bytes = 50 * 1024
 
-    # ------- Path 0: iCloud direct API (preferred for share.icloud.com) - #
+    # ------- Path 0a: iCloud sharedstreams API (legacy Shared Albums) --- #
     if _is_icloud_share(url):
         icloud_result = _resolve_icloud_share(url, timeout=timeout)
         if icloud_result:
@@ -613,7 +753,7 @@ def resolve_url(
                 content, mime = result
                 if len(content) >= min_real_photo_bytes:
                     log.info(
-                        "Resolved %s via iCloud API (image: %s, %d bytes)",
+                        "Resolved %s via iCloud sharedstreams API (image: %s, %d bytes)",
                         url,
                         image_url,
                         len(content),
@@ -625,14 +765,37 @@ def resolve_url(
                         mime_type=mime or mime_hint,
                         extension=_ext_for_mime(mime or mime_hint),
                     )
+
+        # ----- Path 0b: newer "iCloud Link" — click Download via Playwright #
+        if use_playwright:
+            log.info("Trying Playwright-driven Download click for iCloud link: %s", url)
+            dl = _resolve_icloud_link_download(url, timeout=90)
+            if dl is not None:
+                content, mime, ext = dl
+                if len(content) >= min_real_photo_bytes:
+                    log.info(
+                        "Resolved %s via iCloud Download button (%d bytes, .%s)",
+                        url,
+                        len(content),
+                        ext,
+                    )
+                    return ResolvedImage(
+                        source_url=url,
+                        final_url=url,
+                        content=content,
+                        mime_type=mime,
+                        extension=ext,
+                    )
                 log.warning(
-                    "iCloud API returned %s for %s but only %d bytes; falling "
-                    "through to Playwright",
-                    image_url,
-                    url,
+                    "iCloud Download yielded only %d bytes for %s; rejecting",
                     len(content),
+                    url,
                 )
-        log.info("iCloud API path didn't yield a photo; trying Playwright")
+        log.warning(
+            "Could not resolve iCloud share %s via API or Download-click",
+            url,
+        )
+        return None
 
     # ------- Path 1: JS-rendered hosts go through Playwright (only) ------ #
     if js_host and use_playwright:

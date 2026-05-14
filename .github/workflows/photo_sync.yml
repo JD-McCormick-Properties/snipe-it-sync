@@ -81,3 +81,12 @@ jobs:
           path: photo_sync/photo_sync_state.db
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Upload debug screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: photo-sync-debug
+          path: photo_sync/_debug/
+          if-no-files-found: ignore
+          retention-days: 14

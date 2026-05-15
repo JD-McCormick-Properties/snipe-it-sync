@@ -178,6 +178,7 @@ class SnipeITClient:
 def summarize_asset(asset: Dict[str, Any]) -> Dict[str, Any]:
     """Pull just the fields we care about from a Snipe-IT asset record."""
     category = asset.get("category") or {}
+    model = asset.get("model") or {}
     return {
         "id": asset.get("id"),
         "asset_tag": (asset.get("asset_tag") or "").strip(),
@@ -185,6 +186,6 @@ def summarize_asset(asset: Dict[str, Any]) -> Dict[str, Any]:
         "serial": (asset.get("serial") or "").strip(),
         "notes": asset.get("notes") or "",
         "image": (asset.get("image") or "").strip(),
-        "category_name": (category.get("name") if isinstance(category, dict) else "")
-        or "",
+        "category_name": (category.get("name") if isinstance(category, dict) else "") or "",
+        "model_name": (model.get("name") if isinstance(model, dict) else "") or "",
     }

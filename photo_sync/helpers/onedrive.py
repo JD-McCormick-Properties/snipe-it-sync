@@ -16,8 +16,17 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
+import re
+
 import msal
 import requests
+
+_SAFE_NAME_RE = re.compile(r"[^\w\s._-]")
+
+
+def _safe_folder(name: str) -> str:
+    cleaned = _SAFE_NAME_RE.sub("", name.strip())
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 log = logging.getLogger(__name__)
 
@@ -276,6 +285,8 @@ class OneDriveClient:
             self._set_item_metadata(file_id, {"description": description})
         return file_id, web_url
 
-    def asset_folder(self, asset_tag: str) -> str:
-        """Folder path used for a given asset tag (relative to drive root)."""
-        return f"{self.base_folder}/{asset_tag}"
+    def asset_folder(self, category: str, model: str) -> str:
+        """Folder path for a given asset: {base}/{category}/{model}."""
+        safe_cat = _safe_folder(category) or "Uncategorized"
+        safe_mod = _safe_folder(model) or "Unknown Model"
+        return f"{self.base_folder}/{safe_cat}/{safe_mod}"

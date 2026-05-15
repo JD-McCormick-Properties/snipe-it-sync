@@ -12,6 +12,7 @@ import hashlib
 import io
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Tuple
 
 from PIL import Image
@@ -30,6 +31,17 @@ except Exception as exc:  # pragma: no cover - environment-dependent
 
 
 SAFE_TAG_RE = re.compile(r"[^A-Za-z0-9._-]+")
+SAFE_NAME_RE = re.compile(r"[^\w\s._-]")
+
+# Snipe-IT returns dates in several formats depending on version and locale.
+_DT_FORMATS = [
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S.%fZ",
+    "%Y-%m-%dT%H:%M:%SZ",
+    "%Y-%m-%dT%H:%M:%S",
+    "%B %d, %Y %I:%M %p",
+    "%B %d, %Y %I:%M%p",
+]
 
 
 def safe_asset_tag(asset_tag: str) -> str:
@@ -38,10 +50,40 @@ def safe_asset_tag(asset_tag: str) -> str:
     return cleaned or "untagged"
 
 
-def build_filename(asset_tag: str, index: int, extension: str) -> str:
-    """Return a normalized filename like 'AT-00001-1.jpg'."""
+def safe_name(name: str) -> str:
+    """Sanitize a human-readable string for use in folder/file names.
+
+    Keeps spaces, letters, numbers, hyphens, underscores, and periods.
+    """
+    cleaned = SAFE_NAME_RE.sub("", name.strip())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _parse_dt(dt_str: str) -> datetime:
+    """Parse a Snipe-IT date string, falling back to now (UTC) on failure."""
+    for fmt in _DT_FORMATS:
+        try:
+            return datetime.strptime(dt_str.strip(), fmt)
+        except ValueError:
+            continue
+    return datetime.now(timezone.utc)
+
+
+def build_filename(model_name: str, uploader: str, dt_str: str, extension: str) -> str:
+    """Return a filename like 'Silverado 1500 - John Smith - 2026-05-15 14-30-22.jpg'.
+
+    Uploader is omitted when empty.
+    """
     ext = extension.lower().lstrip(".") or "jpg"
-    return f"{safe_asset_tag(asset_tag)}-{index}.{ext}"
+    dt = _parse_dt(dt_str) if dt_str else datetime.now(timezone.utc)
+    dt_label = dt.strftime("%Y-%m-%d %H-%M-%S")
+
+    parts = [safe_name(model_name) or "Photo"]
+    if uploader:
+        parts.append(safe_name(uploader))
+    parts.append(dt_label)
+
+    return f"{' - '.join(parts)}.{ext}"
 
 
 def hash_bytes(content: bytes) -> str:

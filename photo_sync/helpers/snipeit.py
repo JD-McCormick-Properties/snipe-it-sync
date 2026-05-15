@@ -184,6 +184,7 @@ def summarize_asset(asset: Dict[str, Any]) -> Dict[str, Any]:
         "name": (asset.get("name") or "").strip(),
         "serial": (asset.get("serial") or "").strip(),
         "notes": asset.get("notes") or "",
+        "image": (asset.get("image") or "").strip(),
         "category_name": (category.get("name") if isinstance(category, dict) else "")
         or "",
     }

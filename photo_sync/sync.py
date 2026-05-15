@@ -147,6 +147,14 @@ def process_asset(
     url_sources: dict = {u: {"uploader": "", "date": ""} for u in urls}
     history_url_count = 0
 
+    # Asset image field — techs update this in the app when checking in/out.
+    # Each new upload gets a new URL on the Snipe-IT server, so the content-
+    # hash dedupe naturally accumulates one OneDrive file per unique photo.
+    asset_image_url = info.get("image", "")
+    if asset_image_url and asset_image_url not in url_sources:
+        urls.insert(0, asset_image_url)
+        url_sources[asset_image_url] = {"uploader": "", "date": ""}
+
     # Many techs paste photo links into individual check-in / check-out
     # notes (the asset's "history" tab) rather than the top-level notes
     # field. Pull those in too if the flag is on.

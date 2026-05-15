@@ -196,7 +196,15 @@ def _is_google_photos_share(url: str) -> bool:
     return host.endswith("photos.app.goo.gl") or host.endswith("photos.google.com")
 
 
-def _is_icloud_share(url: str) -> bool:
+def is_icloud_share(url: str) -> bool:
+    """Return True for any share.icloud.com / icloud.com photo-share URL.
+
+    Used by the orchestrator to short-circuit iCloud URLs before attempting
+    resolution, since Apple actively blocks headless browsers and the newer
+    "iCloud Link" format (icloudlinks/…) is not accessible via the legacy
+    sharedstreams API either.  These URLs require the manual WSL export
+    workaround described in the README.
+    """
     host = urlparse(url).netloc.lower()
     return "icloud.com" in host
 
@@ -844,58 +852,18 @@ def resolve_url(
     # phone photo at modest quality is several hundred KB.
     min_real_photo_bytes = 50 * 1024
 
-    # ------- Path 0a: iCloud sharedstreams API (legacy Shared Albums) --- #
-    if _is_icloud_share(url):
-        icloud_result = _resolve_icloud_share(url, timeout=timeout)
-        if icloud_result:
-            image_url, mime_hint = icloud_result
-            result = _download_image(
-                image_url, referer=url, timeout=timeout, max_bytes=max_bytes
-            )
-            if result:
-                content, mime = result
-                if len(content) >= min_real_photo_bytes:
-                    log.info(
-                        "Resolved %s via iCloud sharedstreams API (image: %s, %d bytes)",
-                        url,
-                        image_url,
-                        len(content),
-                    )
-                    return ResolvedImage(
-                        source_url=url,
-                        final_url=image_url,
-                        content=content,
-                        mime_type=mime or mime_hint,
-                        extension=_ext_for_mime(mime or mime_hint),
-                    )
-
-        # ----- Path 0b: newer "iCloud Link" — click Download via Playwright #
-        if use_playwright:
-            log.info("Trying Playwright-driven Download click for iCloud link: %s", url)
-            dl = _resolve_icloud_link_download(url, timeout=90)
-            if dl is not None:
-                content, mime, ext = dl
-                if len(content) >= min_real_photo_bytes:
-                    log.info(
-                        "Resolved %s via iCloud Download button (%d bytes, .%s)",
-                        url,
-                        len(content),
-                        ext,
-                    )
-                    return ResolvedImage(
-                        source_url=url,
-                        final_url=url,
-                        content=content,
-                        mime_type=mime,
-                        extension=ext,
-                    )
-                log.warning(
-                    "iCloud Download yielded only %d bytes for %s; rejecting",
-                    len(content),
-                    url,
-                )
+    # ------- Path 0: iCloud shares — manual export required ------------ #
+    # Apple actively blocks headless browsers on share.icloud.com, and the
+    # newer "Copy iCloud Link" format (/photos/#/icloudlinks/…) is not
+    # reachable via the legacy sharedstreams API either.  The orchestrator
+    # is expected to catch these via is_icloud_share() *before* calling
+    # resolve_url(), but we keep this guard as a safety net so a stray
+    # iCloud URL never silently falls through to the HTTP path (which would
+    # download Apple's branding logo instead of the photo).
+    if is_icloud_share(url):
         log.warning(
-            "Could not resolve iCloud share %s via API or Download-click",
+            "iCloud share URL requires manual export and cannot be resolved "
+            "automatically — skipping: %s",
             url,
         )
         return None

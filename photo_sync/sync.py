@@ -198,11 +198,10 @@ def process_asset(
         )
 
     safe_tag = safe_asset_tag(asset_tag)
-    folder = drive.asset_folder(safe_tag)
+    folder = drive.asset_folder(info["category_name"], info["model_name"])
     folder_ensured = False
 
     results: List[UploadResult] = []
-    starting_count = store.count_for_asset(asset_id)
 
     for i, url in enumerate(urls, start=1):
         if not cfg.force_resync and store.is_processed(asset_id, url):
@@ -262,10 +261,9 @@ def process_asset(
             drive.ensure_folder(folder)
             folder_ensured = True
 
-        index = starting_count + len(
-            [r for r in results if not r.skipped_reason]
-        ) + 1
-        filename = build_filename(safe_tag, index, ext)
+        uploader = url_sources.get(url, {}).get("uploader", "")
+        entry_date = url_sources.get(url, {}).get("date", "")
+        filename = build_filename(info["model_name"], uploader, entry_date, ext)
 
         description = _build_file_description(
             asset_name=asset_name,

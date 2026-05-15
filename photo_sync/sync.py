@@ -35,7 +35,7 @@ from helpers.image_utils import (
     normalize_image,
     safe_asset_tag,
 )
-from helpers.link_resolver import extract_urls, resolve_url
+from helpers.link_resolver import extract_urls, is_icloud_share, resolve_url
 from helpers.onedrive import OneDriveClient
 from helpers.snipeit import SnipeITClient, summarize_asset
 
@@ -201,6 +201,25 @@ def process_asset(
             log.debug("  [%d] %s — already processed, skipping", i, url)
             results.append(
                 UploadResult(source_url=url, onedrive_url="", skipped_reason="already_uploaded")
+            )
+            continue
+
+        # iCloud shares cannot be resolved automatically — Apple blocks
+        # headless browsers, and the newer iCloud Link format is not
+        # accessible via the sharedstreams API.  Flag for manual export.
+        if is_icloud_share(url):
+            log.warning(
+                "  [%d] MANUAL ACTION REQUIRED — iCloud share cannot be "
+                "processed automatically: %s",
+                i,
+                url,
+            )
+            results.append(
+                UploadResult(
+                    source_url=url,
+                    onedrive_url="",
+                    skipped_reason="icloud_manual",
+                )
             )
             continue
 
@@ -421,7 +440,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     store = DedupeStore(cfg.db_path)
 
-    totals = {"assets_seen": 0, "assets_with_urls": 0, "uploaded": 0, "skipped": 0, "failed": 0}
+    totals = {
+        "assets_seen": 0,
+        "assets_with_urls": 0,
+        "uploaded": 0,
+        "skipped": 0,
+        "failed": 0,
+        "icloud_manual": 0,
+    }
+    # Collect (asset_tag, url) pairs that need the manual iCloud export
+    # workaround so we can print a single grouped summary at the end.
+    icloud_pending: List[tuple] = []
 
     for asset in snipe.iter_hardware():
         totals["assets_seen"] += 1
@@ -442,9 +471,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             if results:
                 totals["assets_with_urls"] += 1
+            asset_tag_label = (
+                asset.get("asset_tag") or f"id-{asset.get('id', '?')}"
+            )
             for r in results:
                 if r.onedrive_url and not r.skipped_reason:
                     totals["uploaded"] += 1
+                elif r.skipped_reason == "icloud_manual":
+                    totals["icloud_manual"] += 1
+                    icloud_pending.append((asset_tag_label, r.source_url))
                 elif r.skipped_reason in (None, "already_uploaded", "duplicate_hash"):
                     totals["skipped"] += 1
                 else:
@@ -455,13 +490,37 @@ def main(argv: Optional[List[str]] = None) -> int:
             break
 
     log.info(
-        "Done. assets_seen=%d assets_with_urls=%d uploaded=%d skipped=%d failed=%d",
+        "Done. assets_seen=%d assets_with_urls=%d uploaded=%d skipped=%d "
+        "failed=%d icloud_manual=%d",
         totals["assets_seen"],
         totals["assets_with_urls"],
         totals["uploaded"],
         totals["skipped"],
         totals["failed"],
+        totals["icloud_manual"],
     )
+
+    if icloud_pending:
+        log.warning(
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        log.warning(
+            "MANUAL ACTION REQUIRED — %d iCloud URL(s) could not be "
+            "processed automatically.",
+            len(icloud_pending),
+        )
+        log.warning(
+            "Use the iCloud web workaround (see photo_sync/README.md, "
+            "'Shared link resolution' section) to export these photos "
+            "manually and upload them to OneDrive."
+        )
+        log.warning("Affected assets:")
+        for asset_tag, url in icloud_pending:
+            log.warning("  [%s]  %s", asset_tag, url)
+        log.warning(
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+
     return 0
 
 

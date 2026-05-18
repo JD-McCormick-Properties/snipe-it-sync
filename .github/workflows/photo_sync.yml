@@ -41,12 +41,7 @@ jobs:
 
       - name: Install Playwright Chromium
         working-directory: photo_sync
-        run: |
-          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" != "true" ]; then
-            python -m playwright install --with-deps chromium
-          else
-            python -m playwright install-deps chromium
-          fi
+        run: python -m playwright install --with-deps chromium
 
       - name: Restore dedupe DB
         uses: actions/cache@v4

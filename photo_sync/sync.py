@@ -150,17 +150,22 @@ class _UrlBatch:
     source: str        # "asset_image" | "top_notes" | "activity"
 
 
-_ACTION_TYPE_LABELS = {
-    "checkout": "Check Out",
-    "checkin": "Check In",
-    "update": "Update",
-    "create": "Added",
-    "upload": "Photos",
-}
-
-
 def _action_label(action_type: str) -> str:
-    return _ACTION_TYPE_LABELS.get((action_type or "").lower().strip(), "Photos")
+    """Map a Snipe-IT action_type string to a human-readable label.
+
+    Snipe-IT returns values like "checkout", "checkin from", "update", etc.
+    We use substring matching so variants like "checkin from" are handled.
+    """
+    at = (action_type or "").lower().strip()
+    if "checkin" in at:
+        return "Check In"
+    if "checkout" in at:
+        return "Check Out"
+    if "update" in at:
+        return "Update"
+    if "create" in at:
+        return "Added"
+    return "Photos"
 
 
 def _event_subfolder_name(action_type: str, uploader: str, date: str) -> str:

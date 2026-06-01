@@ -59,7 +59,7 @@ def safe_name(name: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
-def _parse_dt(dt_str: str) -> datetime:
+def parse_dt(dt_str: str) -> datetime:
     """Parse a Snipe-IT date string, falling back to now (UTC) on failure."""
     for fmt in _DT_FORMATS:
         try:
@@ -75,7 +75,7 @@ def build_filename(model_name: str, uploader: str, dt_str: str, extension: str) 
     Uploader is omitted when empty.
     """
     ext = extension.lower().lstrip(".") or "jpg"
-    dt = _parse_dt(dt_str) if dt_str else datetime.now(timezone.utc)
+    dt = parse_dt(dt_str) if dt_str else datetime.now(timezone.utc)
     dt_label = dt.strftime("%Y-%m-%d %H-%M-%S")
 
     parts = [safe_name(model_name) or "Photo"]

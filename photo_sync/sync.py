@@ -33,9 +33,17 @@ from helpers.image_utils import (
     build_filename,
     hash_bytes,
     normalize_image,
+    parse_dt,
     safe_asset_tag,
+    safe_name,
 )
-from helpers.link_resolver import extract_urls, is_icloud_share, resolve_url
+from helpers.link_resolver import (
+    extract_urls,
+    is_icloud_share,
+    is_google_photos_share,
+    resolve_google_photos_album,
+    resolve_url,
+)
 from helpers.onedrive import OneDriveClient
 from helpers.snipeit import SnipeITClient, summarize_asset
 
@@ -126,6 +134,225 @@ class UploadResult:
     skipped_reason: Optional[str] = None
 
 
+@dataclass
+class _UrlBatch:
+    """URLs collected from a single source event (one activity entry, the
+    asset image field, or the top-level notes field).
+
+    Multiple URLs in one batch — or a single Google Photos album that
+    expands to multiple photos — trigger subfolder creation so each event
+    gets its own clearly-named folder.
+    """
+    urls: List[str]
+    uploader: str
+    date: str
+    action_type: str   # "checkout" | "checkin" | "update" | "" etc.
+    source: str        # "asset_image" | "top_notes" | "activity"
+
+
+_ACTION_TYPE_LABELS = {
+    "checkout": "Check Out",
+    "checkin": "Check In",
+    "update": "Update",
+    "create": "Added",
+    "upload": "Photos",
+}
+
+
+def _action_label(action_type: str) -> str:
+    return _ACTION_TYPE_LABELS.get((action_type or "").lower().strip(), "Photos")
+
+
+def _event_subfolder_name(action_type: str, uploader: str, date: str) -> str:
+    """Build a subfolder name like 'Check Out - John Smith - 2026-05-19 14-30'."""
+    parts = [_action_label(action_type)]
+    if uploader:
+        parts.append(safe_name(uploader))
+    if date:
+        parts.append(parse_dt(date).strftime("%Y-%m-%d %H-%M"))
+    return " - ".join(parts)
+
+
+def _collect_url_batches(
+    info: dict,
+    asset_id: int,
+    cfg: "Config",
+    snipe: SnipeITClient,
+) -> List[_UrlBatch]:
+    """Collect URL batches from all sources, preserving per-event grouping.
+
+    Each activity log entry is its own batch so we know which URLs belong
+    to the same check-in or check-out event.
+    """
+    batches: List[_UrlBatch] = []
+    all_seen: set = set()
+
+    # 1. Asset image field
+    asset_image_url = info.get("image", "")
+    if asset_image_url:
+        batches.append(_UrlBatch(
+            urls=[asset_image_url],
+            uploader="", date="", action_type="", source="asset_image",
+        ))
+        all_seen.add(asset_image_url)
+
+    # 2. Top-level notes field
+    notes_urls = [u for u in extract_urls(info.get("notes", "")) if u not in all_seen]
+    if notes_urls:
+        batches.append(_UrlBatch(
+            urls=notes_urls,
+            uploader="", date="", action_type="", source="top_notes",
+        ))
+        all_seen.update(notes_urls)
+
+    # 3. Activity log — each entry is its own batch
+    if cfg.include_history_notes:
+        try:
+            for entry in snipe.iter_asset_activity(asset_id):
+                entry_note = entry.get("note") or entry.get("notes") or ""
+                if not entry_note:
+                    continue
+                entry_urls = [u for u in extract_urls(entry_note) if u not in all_seen]
+                if entry_urls:
+                    batches.append(_UrlBatch(
+                        urls=entry_urls,
+                        uploader=_extract_uploader_name(entry),
+                        date=_extract_entry_date(entry),
+                        action_type=entry.get("action_type") or "",
+                        source="activity",
+                    ))
+                    all_seen.update(entry_urls)
+        except Exception as exc:
+            log.warning("Could not fetch activity log for asset %s: %s", asset_id, exc)
+
+    return batches
+
+
+def _process_batch(
+    batch: _UrlBatch,
+    *,
+    asset_id: int,
+    asset_name: str,
+    asset_tag: str,
+    safe_tag: str,
+    info: dict,
+    cfg: "Config",
+    drive: OneDriveClient,
+    store: DedupeStore,
+    base_folder: str,
+) -> List[UploadResult]:
+    """Resolve, deduplicate, and upload all photos for one URL batch.
+
+    Creates a subfolder when the batch yields more than one unique photo
+    (either multiple URLs in the same entry, or a Google Photos album that
+    expands to multiple images).
+    """
+    results: List[UploadResult] = []
+    # Each item: (source_url, content, mime, ext, final_url, digest)
+    resolved_photos: List[tuple] = []
+
+    for url in batch.urls:
+        if is_icloud_share(url):
+            log.warning("  MANUAL ACTION REQUIRED — iCloud: %s", url)
+            results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="icloud_manual"))
+            continue
+
+        if is_google_photos_share(url):
+            # Always use the album resolver — handles single photos too.
+            # Skip is_processed check; rely on content-hash dedup so new
+            # photos added to an existing album are picked up on the next run.
+            if not cfg.use_playwright:
+                results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="unresolved"))
+                continue
+            log.info("  Resolving Google Photos album: %s", url)
+            photos = resolve_google_photos_album(url)
+            if not photos:
+                log.warning("  Could not resolve Google Photos album: %s", url)
+                results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="unresolved"))
+                continue
+            for photo in photos:
+                content, mime, ext = normalize_image(photo.content, photo.mime_type, photo.extension)
+                digest = hash_bytes(content)
+                if not cfg.force_resync and store.has_hash_for_asset(asset_id, digest):
+                    continue
+                resolved_photos.append((url, content, mime, ext, photo.final_url, digest))
+        else:
+            if not cfg.force_resync and store.is_processed(asset_id, url):
+                log.debug("  %s — already processed, skipping", url)
+                results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="already_uploaded"))
+                continue
+            log.info("  Resolving %s", url)
+            resolved = resolve_url(url, use_playwright=cfg.use_playwright)
+            if not resolved:
+                log.warning("  Could not resolve %s", url)
+                results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="unresolved"))
+                continue
+            content, mime, ext = normalize_image(resolved.content, resolved.mime_type, resolved.extension)
+            digest = hash_bytes(content)
+            if not cfg.force_resync and store.has_hash_for_asset(asset_id, digest):
+                log.info("  Hash %s already uploaded for asset %s — skipping", digest[:10], asset_id)
+                results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="duplicate_hash"))
+                continue
+            resolved_photos.append((url, content, mime, ext, resolved.final_url, digest))
+
+    if not resolved_photos:
+        return results
+
+    # Decide target folder — subfolder when multiple unique photos in one event.
+    use_subfolder = len(resolved_photos) > 1
+    if use_subfolder:
+        subfolder = _event_subfolder_name(batch.action_type, batch.uploader, batch.date)
+        target_folder = f"{base_folder}/{safe_name(subfolder)}"
+        drive.ensure_folder(target_folder)
+        log.info("  Using event subfolder: %s", subfolder)
+    else:
+        target_folder = base_folder
+        drive.ensure_folder(target_folder)
+
+    for idx, (source_url, content, mime, ext, final_url, digest) in enumerate(resolved_photos, start=1):
+        if use_subfolder:
+            # Inside the subfolder the model name provides context; index differentiates.
+            model_safe = safe_name(info["model_name"]) or "Photo"
+            filename = f"{model_safe} - {idx}.{ext}"
+        else:
+            filename = build_filename(info["model_name"], batch.uploader, batch.date, ext)
+
+        description = _build_file_description(
+            asset_name=asset_name,
+            asset_tag=asset_tag,
+            source_url=source_url,
+            uploader=batch.uploader,
+            entry_date=batch.date,
+        )
+
+        log.info("  Uploading %s (%d bytes)", filename, len(content))
+        try:
+            file_id, web_url = drive.upload_small_file(
+                target_folder, filename, content, content_type=mime, description=description,
+            )
+        except Exception as exc:
+            log.exception("  Upload failed for %s: %s", source_url, exc)
+            results.append(UploadResult(source_url=source_url, onedrive_url="", skipped_reason="upload_failed"))
+            continue
+
+        # For Google Photos albums use final_url (CDN URL) as the dedupe key
+        # so each photo in the album is tracked individually.
+        db_source_url = final_url if is_google_photos_share(source_url) else source_url
+        store.record_upload(
+            asset_id=asset_id,
+            asset_tag=safe_tag,
+            source_url=db_source_url,
+            content_hash=digest,
+            onedrive_file_id=file_id,
+            onedrive_url=web_url,
+            filename=filename,
+        )
+        results.append(UploadResult(source_url=source_url, onedrive_url=web_url))
+        log.info("  Uploaded → %s", web_url)
+
+    return results
+
+
 def process_asset(
     asset: dict,
     *,
@@ -140,166 +367,39 @@ def process_asset(
     asset_name = info["name"] or asset_tag
     notes = info["notes"]
 
-    urls = extract_urls(notes)
-    # Per-URL provenance: who/when, captured so we can write a useful
-    # description into OneDrive. URLs from the top-level notes field
-    # have no specific uploader.
-    url_sources: dict = {u: {"uploader": "", "date": ""} for u in urls}
-    history_url_count = 0
+    batches = _collect_url_batches(info, asset_id, cfg, snipe)
+    total_urls = sum(len(b.urls) for b in batches)
+    history_urls = sum(len(b.urls) for b in batches if b.source == "activity")
 
-    # Asset image field — techs update this in the app when checking in/out.
-    # Each new upload gets a new URL on the Snipe-IT server, so the content-
-    # hash dedupe naturally accumulates one OneDrive file per unique photo.
-    asset_image_url = info.get("image", "")
-    if asset_image_url and asset_image_url not in url_sources:
-        urls.insert(0, asset_image_url)
-        url_sources[asset_image_url] = {"uploader": "", "date": ""}
-
-    # Many techs paste photo links into individual check-in / check-out
-    # notes (the asset's "history" tab) rather than the top-level notes
-    # field. Pull those in too if the flag is on.
-    if cfg.include_history_notes:
-        seen = set(urls)
-        try:
-            for entry in snipe.iter_asset_activity(asset_id):
-                entry_note = entry.get("note") or entry.get("notes") or ""
-                if not entry_note:
-                    continue
-                uploader = _extract_uploader_name(entry)
-                entry_date = _extract_entry_date(entry)
-                for u in extract_urls(entry_note):
-                    if u not in seen:
-                        seen.add(u)
-                        urls.append(u)
-                        url_sources[u] = {
-                            "uploader": uploader,
-                            "date": entry_date,
-                        }
-                        history_url_count += 1
-        except Exception as exc:
-            log.warning(
-                "Could not fetch activity log for asset %s: %s", asset_id, exc
-            )
-
-    if not urls:
+    if not batches:
         return []
 
-    if history_url_count:
+    if history_urls:
         log.info(
             "Asset %s (%s): %d URL(s) (%d from history notes)",
-            asset_id,
-            asset_tag,
-            len(urls),
-            history_url_count,
+            asset_id, asset_tag, total_urls, history_urls,
         )
     else:
-        log.info(
-            "Asset %s (%s): found %d URL(s)", asset_id, asset_tag, len(urls)
-        )
+        log.info("Asset %s (%s): found %d URL(s)", asset_id, asset_tag, total_urls)
 
     safe_tag = safe_asset_tag(asset_tag)
-    folder = drive.asset_folder(info["category_name"], info["model_name"])
-    folder_ensured = False
-
+    base_folder = drive.asset_folder(info["category_name"], info["model_name"])
     results: List[UploadResult] = []
 
-    for i, url in enumerate(urls, start=1):
-        if not cfg.force_resync and store.is_processed(asset_id, url):
-            log.debug("  [%d] %s — already processed, skipping", i, url)
-            results.append(
-                UploadResult(source_url=url, onedrive_url="", skipped_reason="already_uploaded")
-            )
-            continue
-
-        # iCloud shares cannot be resolved automatically — Apple blocks
-        # headless browsers, and the newer iCloud Link format is not
-        # accessible via the sharedstreams API.  Flag for manual export.
-        if is_icloud_share(url):
-            log.warning(
-                "  [%d] MANUAL ACTION REQUIRED — iCloud share cannot be "
-                "processed automatically: %s",
-                i,
-                url,
-            )
-            results.append(
-                UploadResult(
-                    source_url=url,
-                    onedrive_url="",
-                    skipped_reason="icloud_manual",
-                )
-            )
-            continue
-
-        log.info("  [%d] resolving %s", i, url)
-        resolved = resolve_url(url, use_playwright=cfg.use_playwright)
-        if not resolved:
-            log.warning("  [%d] could not resolve %s", i, url)
-            results.append(
-                UploadResult(source_url=url, onedrive_url="", skipped_reason="unresolved")
-            )
-            continue
-
-        # Normalize HEIC -> JPG
-        content, mime, ext = normalize_image(
-            resolved.content, resolved.mime_type, resolved.extension
-        )
-        digest = hash_bytes(content)
-
-        if not cfg.force_resync and store.has_hash_for_asset(asset_id, digest):
-            log.info(
-                "  [%d] hash %s already uploaded for asset %s — skipping",
-                i,
-                digest[:10],
-                asset_id,
-            )
-            results.append(
-                UploadResult(source_url=url, onedrive_url="", skipped_reason="duplicate_hash")
-            )
-            continue
-
-        if not folder_ensured:
-            drive.ensure_folder(folder)
-            folder_ensured = True
-
-        uploader = url_sources.get(url, {}).get("uploader", "")
-        entry_date = url_sources.get(url, {}).get("date", "")
-        filename = build_filename(info["model_name"], uploader, entry_date, ext)
-
-        description = _build_file_description(
+    for batch in batches:
+        batch_results = _process_batch(
+            batch,
+            asset_id=asset_id,
             asset_name=asset_name,
             asset_tag=asset_tag,
-            source_url=url,
-            uploader=url_sources.get(url, {}).get("uploader", ""),
-            entry_date=url_sources.get(url, {}).get("date", ""),
+            safe_tag=safe_tag,
+            info=info,
+            cfg=cfg,
+            drive=drive,
+            store=store,
+            base_folder=base_folder,
         )
-
-        log.info("  [%d] uploading %s (%d bytes)", i, filename, len(content))
-        try:
-            file_id, web_url = drive.upload_small_file(
-                folder,
-                filename,
-                content,
-                content_type=mime,
-                description=description,
-            )
-        except Exception as exc:
-            log.exception("  [%d] upload failed for %s: %s", i, url, exc)
-            results.append(
-                UploadResult(source_url=url, onedrive_url="", skipped_reason="upload_failed")
-            )
-            continue
-
-        store.record_upload(
-            asset_id=asset_id,
-            asset_tag=safe_tag,
-            source_url=url,
-            content_hash=digest,
-            onedrive_file_id=file_id,
-            onedrive_url=web_url,
-            filename=filename,
-        )
-        results.append(UploadResult(source_url=url, onedrive_url=web_url))
-        log.info("  [%d] uploaded → %s", i, web_url)
+        results.extend(batch_results)
 
     if cfg.write_back:
         new_notes = _append_writeback(notes, results)

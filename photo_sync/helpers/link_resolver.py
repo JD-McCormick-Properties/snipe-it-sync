@@ -191,7 +191,7 @@ def _upgrade_google_photos_url(url: str) -> str:
     return url
 
 
-def _is_google_photos_share(url: str) -> bool:
+def is_google_photos_share(url: str) -> bool:
     host = urlparse(url).netloc.lower()
     return host.endswith("photos.app.goo.gl") or host.endswith("photos.google.com")
 
@@ -781,6 +781,114 @@ def _resolve_with_playwright(
         return None
 
 
+def resolve_google_photos_album(
+    url: str,
+    *,
+    timeout: int = 90,
+    max_photos: int = 50,
+    max_bytes: int = 50 * 1024 * 1024,
+) -> List["ResolvedImage"]:
+    """Resolve a Google Photos share link and return every photo in the album.
+
+    Uses Playwright to render the album grid, scrolls to trigger lazy loading,
+    collects all thumbnail URLs, upgrades them to full resolution, then
+    downloads each one.  Returns an empty list on any failure.
+
+    For single-photo shares this returns a one-item list, which lets callers
+    use this function uniformly for all Google Photos URLs.
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore
+    except ImportError:
+        log.warning("Playwright not installed; cannot resolve Google Photos album %s", url)
+        return []
+
+    # JS that collects all distinct Google CDN image URLs visible in the grid.
+    extract_js = """
+        () => {
+            const seen = new Set();
+            const urls = [];
+            for (const img of document.querySelectorAll('img')) {
+                const src = img.currentSrc || img.src || '';
+                if (!src || src.startsWith('data:') || seen.has(src)) continue;
+                if (!src.includes('googleusercontent.com') && !src.includes('ggpht.com')) continue;
+                const rect = img.getBoundingClientRect();
+                if (rect.width < 50 || rect.height < 50) continue;
+                seen.add(src);
+                urls.push(src);
+            }
+            return urls;
+        }
+    """
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            try:
+                context = browser.new_context(
+                    user_agent=DEFAULT_HEADERS["User-Agent"],
+                    viewport={"width": 1440, "height": 900},
+                )
+                page = context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+                page.wait_for_timeout(5_000)
+
+                # Scroll to trigger lazy loading of album thumbnails.
+                for _ in range(5):
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    page.wait_for_timeout(1_500)
+
+                raw_urls = page.evaluate(extract_js) or []
+            finally:
+                browser.close()
+    except Exception as exc:
+        log.warning("Playwright album resolution failed for %s: %s", url, exc)
+        return []
+
+    # Upgrade thumbnails to full resolution and deduplicate.
+    full_res_urls: List[str] = []
+    seen: set = set()
+    for raw in raw_urls[:max_photos]:
+        upgraded = _upgrade_google_photos_url(raw)
+        if upgraded not in seen:
+            seen.add(upgraded)
+            full_res_urls.append(upgraded)
+
+    if not full_res_urls:
+        log.warning("No images found in Google Photos album: %s", url)
+        return []
+
+    log.info("Found %d image(s) in Google Photos album %s", len(full_res_urls), url)
+
+    min_photo_bytes = 50 * 1024
+    results: List[ResolvedImage] = []
+    for img_url in full_res_urls:
+        dl = _download_image(img_url, referer=url, max_bytes=max_bytes)
+        if dl:
+            content, mime = dl
+            if len(content) >= min_photo_bytes:
+                results.append(
+                    ResolvedImage(
+                        source_url=url,
+                        final_url=img_url,
+                        content=content,
+                        mime_type=mime,
+                        extension=_ext_for_mime(mime),
+                    )
+                )
+
+    log.info(
+        "Downloaded %d/%d photo(s) from Google Photos album %s",
+        len(results),
+        len(full_res_urls),
+        url,
+    )
+    return results
+
+
 def _download_image(
     image_url: str,
     *,
@@ -873,7 +981,7 @@ def resolve_url(
         log.info("Using Playwright for JS-rendered host: %s", url)
         rendered_image_url = _resolve_with_playwright(url, timeout=60)
         if rendered_image_url:
-            if _is_google_photos_share(url):
+            if is_google_photos_share(url):
                 rendered_image_url = _upgrade_google_photos_url(rendered_image_url)
             result = _download_image(
                 rendered_image_url,
@@ -954,7 +1062,7 @@ def resolve_url(
         log.info("No image meta tag found in HTML at %s", final_url)
         return None
 
-    if _is_google_photos_share(url):
+    if is_google_photos_share(url):
         image_url = _upgrade_google_photos_url(image_url)
 
     result = _download_image(

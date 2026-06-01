@@ -803,21 +803,50 @@ def resolve_google_photos_album(
         log.warning("Playwright not installed; cannot resolve Google Photos album %s", url)
         return []
 
-    # JS that collects all distinct Google CDN image URLs visible in the grid.
+    # Collect all large visible images — both <img> tags and CSS
+    # background-image.  Google Photos renders album thumbnails as
+    # background-image on <div>s, so we must check both.  We gather
+    # all candidates sorted by area (largest first), then filter to
+    # Google CDN URLs; if none match we fall back to all large images
+    # so the function still works if Google changes their CDN domains.
     extract_js = """
         () => {
             const seen = new Set();
-            const urls = [];
+            const candidates = [];
+
+            // <img> tags
             for (const img of document.querySelectorAll('img')) {
-                const src = img.currentSrc || img.src || '';
-                if (!src || src.startsWith('data:') || seen.has(src)) continue;
-                if (!src.includes('googleusercontent.com') && !src.includes('ggpht.com')) continue;
                 const rect = img.getBoundingClientRect();
-                if (rect.width < 50 || rect.height < 50) continue;
+                const area = rect.width * rect.height;
+                const src = img.currentSrc || img.src || '';
+                if (!src || src.startsWith('data:') || seen.has(src) || area < 2500) continue;
                 seen.add(src);
-                urls.push(src);
+                candidates.push({ src, area });
             }
-            return urls;
+
+            // CSS background-image (Google Photos album grid uses these)
+            for (const el of document.querySelectorAll('div, a, figure, picture, span')) {
+                try {
+                    const bg = window.getComputedStyle(el).backgroundImage;
+                    const m = bg && bg.match(/url\\(["']?(.+?)["']?\\)/);
+                    if (!m || !m[1] || m[1].startsWith('data:') || seen.has(m[1])) continue;
+                    const rect = el.getBoundingClientRect();
+                    const area = rect.width * rect.height;
+                    if (area < 2500) continue;
+                    seen.add(m[1]);
+                    candidates.push({ src: m[1], area });
+                } catch (e) {}
+            }
+
+            candidates.sort((a, b) => b.area - a.area);
+
+            // Prefer known Google CDN domains; fall back to all if none found.
+            const cdn = candidates.filter(c =>
+                c.src.includes('googleusercontent.com') ||
+                c.src.includes('ggpht.com') ||
+                /lh[0-9]+\\./.test(c.src)
+            );
+            return (cdn.length ? cdn : candidates).map(c => c.src);
         }
     """
 
@@ -834,14 +863,20 @@ def resolve_google_photos_album(
                 )
                 page = context.new_page()
                 page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
-                page.wait_for_timeout(5_000)
+                # Give the SPA more time to render the album grid.
+                page.wait_for_timeout(8_000)
 
-                # Scroll to trigger lazy loading of album thumbnails.
-                for _ in range(5):
+                # Scroll to trigger lazy loading; pause between each scroll
+                # to give React/Vue time to mount new thumbnails.
+                for _ in range(6):
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    page.wait_for_timeout(1_500)
+                    page.wait_for_timeout(2_000)
 
                 raw_urls = page.evaluate(extract_js) or []
+                log.debug(
+                    "Google Photos page %s yielded %d raw image candidate(s)",
+                    url, len(raw_urls),
+                )
             finally:
                 browser.close()
     except Exception as exc:

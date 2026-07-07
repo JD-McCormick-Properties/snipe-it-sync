@@ -444,11 +444,11 @@ def _extract_uploader_name(entry: dict) -> str:
 
 
 def _extract_entry_date(entry: dict) -> str:
-    """Best-effort human-readable date for a Snipe-IT activity entry."""
+    """Best-effort machine-readable date for a Snipe-IT activity entry."""
     for key in ("created_at", "action_date", "updated_at"):
         val = entry.get(key)
         if isinstance(val, dict):
-            return (val.get("formatted") or val.get("datetime") or "").strip()
+            return (val.get("datetime") or val.get("formatted") or "").strip()
         if isinstance(val, str) and val.strip():
             return val.strip()
     return ""

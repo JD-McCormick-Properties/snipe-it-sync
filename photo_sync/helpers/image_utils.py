@@ -61,11 +61,12 @@ def safe_name(name: str) -> str:
 
 def parse_dt(dt_str: str) -> datetime:
     """Parse a Snipe-IT date string, falling back to now (UTC) on failure."""
-    for fmt in _DT_FORMATS:
-        try:
-            return datetime.strptime(dt_str.strip(), fmt)
-        except ValueError:
-            continue
+    for s in (dt_str.strip(), dt_str.strip().upper()):
+        for fmt in _DT_FORMATS:
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
     return datetime.now(timezone.utc)
 
 

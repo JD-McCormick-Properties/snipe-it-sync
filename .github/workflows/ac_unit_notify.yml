@@ -1,0 +1,67 @@
+name: AC Unit Checkout Notifier
+
+# Runs every 30 minutes so notifications land within ~30 min of a checkout.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+# SETUP REQUIRED — one-time steps before this workflow will work:
+#
+# 1. Azure app permissions:
+#    In your Azure app registration (same one used for OneDrive), add:
+#      Application permission: Mail.Send
+#    Then grant admin consent.
+#
+# 2. (Recommended) Restrict Mail.Send to info@jdmccormick.com only:
+#    Run in Exchange Online PowerShell:
+#      New-ApplicationAccessPolicy -AppId <AZURE_CLIENT_ID> \
+#        -PolicyScopeGroupId info@jdmccormick.com \
+#        -AccessRight RestrictAccess \
+#        -Description "Limit mail send to info mailbox"
+#
+# 3. GitHub secrets (same as photo sync — no new secrets needed):
+#    SNIPE_URL, SNIPE_API_KEY, AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
+#
+# 4. GitHub variables to set:
+#    NOTIFY_FROM_EMAIL  = info@jdmccormick.com
+#    NOTIFY_TO_EMAILS   = jill@jdmccormick.com,jaylen@jdmccormick.com
+#    NOTIFY_CATEGORY    = AC Units   (optional — this is the default)
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r notifications/requirements.txt
+
+      - name: Restore notifier state
+        uses: actions/cache@v4
+        with:
+          path: ac_notify_state.json
+          key: ac-notify-state-${{ github.run_id }}
+          restore-keys: |
+            ac-notify-state-
+
+      - name: Run notifier
+        env:
+          SNIPE_URL: ${{ secrets.SNIPE_URL }}
+          SNIPE_API_KEY: ${{ secrets.SNIPE_API_KEY }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          NOTIFY_FROM_EMAIL: ${{ vars.NOTIFY_FROM_EMAIL }}
+          NOTIFY_TO_EMAILS: ${{ vars.NOTIFY_TO_EMAILS }}
+          NOTIFY_CATEGORY: ${{ vars.NOTIFY_CATEGORY || 'AC Units' }}
+          NOTIFY_STATE_PATH: ac_notify_state.json
+        run: python notifications/notifier.py

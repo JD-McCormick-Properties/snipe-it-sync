@@ -120,6 +120,33 @@ class SnipeITClient:
     def get_asset(self, asset_id: int) -> Dict[str, Any]:
         return self._request("GET", f"/api/v1/hardware/{asset_id}")
 
+    def get_asset_uploads(self, asset_id: int) -> List[Dict[str, Any]]:
+        """Return the uploads list for an asset via a full individual fetch."""
+        data = self.get_asset(asset_id)
+        uploads = data.get("uploads")
+        return uploads if isinstance(uploads, list) else []
+
+    def download_upload(
+        self, url: str, max_bytes: int = 50 * 1024 * 1024
+    ) -> Optional[bytes]:
+        """Download a Snipe-IT file attachment using the API session credentials."""
+        try:
+            resp = self.session.get(url, timeout=60, stream=True)
+            resp.raise_for_status()
+            chunks: List[bytes] = []
+            total = 0
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    total += len(chunk)
+                    if total > max_bytes:
+                        log.warning("Upload file too large (>50 MB), skipping: %s", url)
+                        return None
+                    chunks.append(chunk)
+            return b"".join(chunks)
+        except Exception as exc:
+            log.warning("Failed to download upload %s: %s", url, exc)
+            return None
+
     def iter_asset_activity(
         self, asset_id: int, page_size: int = 100
     ) -> Iterator[Dict[str, Any]]:

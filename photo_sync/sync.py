@@ -17,9 +17,11 @@ import argparse
 import logging
 import os
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -178,11 +180,42 @@ def _event_subfolder_name(action_type: str, uploader: str, date: str) -> str:
     return " - ".join(parts)
 
 
+# Max gap between a native upload timestamp and an activity log entry for them
+# to be considered the same event.
+ACTIVITY_MATCH_WINDOW = timedelta(minutes=10)
+
+
+def _nearest_activity_entry(
+    upload_dt: datetime, activity_entries: List[Dict]
+) -> Optional[Dict]:
+    """Return the nearest checkin/checkout entry within ACTIVITY_MATCH_WINDOW of upload_dt."""
+    best: Optional[Dict] = None
+    best_delta: Optional[timedelta] = None
+    for entry in activity_entries:
+        action = (entry.get("action_type") or "").lower()
+        if "checkin" not in action and "checkout" not in action:
+            continue
+        entry_date = _extract_entry_date(entry)
+        if not entry_date:
+            continue
+        try:
+            entry_dt = parse_dt(entry_date)
+            if entry_dt.tzinfo is None:
+                entry_dt = entry_dt.replace(tzinfo=timezone.utc)
+            delta = abs(upload_dt - entry_dt)
+            if delta <= ACTIVITY_MATCH_WINDOW and (best_delta is None or delta < best_delta):
+                best = entry
+                best_delta = delta
+        except Exception:
+            continue
+    return best
+
+
 def _collect_url_batches(
     info: dict,
     asset_id: int,
     cfg: "Config",
-    snipe: SnipeITClient,
+    activity_entries: List[Dict],
 ) -> List[_UrlBatch]:
     """Collect URL batches from all sources, preserving per-event grouping.
 
@@ -212,23 +245,20 @@ def _collect_url_batches(
 
     # 3. Activity log — each entry is its own batch
     if cfg.include_history_notes:
-        try:
-            for entry in snipe.iter_asset_activity(asset_id):
-                entry_note = entry.get("note") or entry.get("notes") or ""
-                if not entry_note:
-                    continue
-                entry_urls = [u for u in extract_urls(entry_note) if u not in all_seen]
-                if entry_urls:
-                    batches.append(_UrlBatch(
-                        urls=entry_urls,
-                        uploader=_extract_uploader_name(entry),
-                        date=_extract_entry_date(entry),
-                        action_type=entry.get("action_type") or "",
-                        source="activity",
-                    ))
-                    all_seen.update(entry_urls)
-        except Exception as exc:
-            log.warning("Could not fetch activity log for asset %s: %s", asset_id, exc)
+        for entry in activity_entries:
+            entry_note = entry.get("note") or entry.get("notes") or ""
+            if not entry_note:
+                continue
+            entry_urls = [u for u in extract_urls(entry_note) if u not in all_seen]
+            if entry_urls:
+                batches.append(_UrlBatch(
+                    urls=entry_urls,
+                    uploader=_extract_uploader_name(entry),
+                    date=_extract_entry_date(entry),
+                    action_type=entry.get("action_type") or "",
+                    source="activity",
+                ))
+                all_seen.update(entry_urls)
 
     return batches
 
@@ -370,12 +400,15 @@ def _process_native_uploads(
     drive: OneDriveClient,
     store: DedupeStore,
     base_folder: str,
+    activity_entries: List[Dict],
 ) -> List[UploadResult]:
     """Download native Snipe-IT file attachments and mirror them to OneDrive.
 
     SnipeMobile uploads photos via POST /api/v1/hardware/{id}/uploads after
-    a checkin or checkout. These live as file attachments on the asset record
-    and are separate from any URLs pasted into notes.
+    a checkin or checkout. Each upload is matched by timestamp to the nearest
+    activity log entry and placed in the same event subfolder logic used by
+    URL batches: 2+ photos from the same event → named subfolder, 1 photo →
+    flat base folder with an event-derived filename.
     """
     results: List[UploadResult] = []
 
@@ -389,6 +422,10 @@ def _process_native_uploads(
         return results
 
     log.info("  %d native Snipe-IT upload(s) found", len(uploads))
+
+    # --- Phase 1: resolve and deduplicate each upload ---
+    # pending items: dicts with resolved content + parsed upload datetime
+    pending: List[Dict] = []
 
     for upload in uploads:
         upload_id = upload.get("id")
@@ -420,7 +457,6 @@ def _process_native_uploads(
             "gif": "image/gif", "webp": "image/webp",
             "heic": "image/heic", "heif": "image/heic",
         }.get(ext, "application/octet-stream")
-
         content, mime, ext = normalize_image(content, mime, ext)
         digest = hash_bytes(content)
 
@@ -442,34 +478,111 @@ def _process_native_uploads(
             if isinstance(upload_date_raw, dict)
             else str(upload_date_raw)
         )
-        filename = build_filename(info["model_name"], "", upload_date, ext)
 
-        drive.ensure_folder(base_folder)
-        try:
-            file_id, web_url = drive.upload_small_file(
-                base_folder, filename, content, content_type=mime,
-                description=_build_file_description(
-                    asset_name=asset_name,
-                    asset_tag=asset_tag,
-                    source_url=upload_url,
-                    uploader="",
-                    entry_date=upload_date,
-                ),
-            )
-        except Exception as exc:
-            log.exception("  OneDrive upload failed for upload %s: %s", upload_id, exc)
-            results.append(UploadResult(
-                source_url=dedupe_key, onedrive_url="", skipped_reason="upload_failed"
-            ))
-            continue
+        upload_dt: Optional[datetime] = None
+        if upload_date:
+            try:
+                upload_dt = parse_dt(upload_date)
+                if upload_dt.tzinfo is None:
+                    upload_dt = upload_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
 
-        store.record_upload(
-            asset_id=asset_id, asset_tag=safe_tag, source_url=dedupe_key,
-            content_hash=digest, onedrive_file_id=file_id, onedrive_url=web_url,
-            filename=filename,
+        pending.append({
+            "dedupe_key": dedupe_key,
+            "upload_url": upload_url,
+            "content": content,
+            "mime": mime,
+            "ext": ext,
+            "digest": digest,
+            "upload_date": upload_date,
+            "upload_dt": upload_dt,
+        })
+
+    if not pending:
+        return results
+
+    # --- Phase 2: group by matched activity entry ---
+    # entry_id (int) → list of pending items; None → unmatched
+    groups: Dict = defaultdict(list)
+    entry_by_id: Dict[int, Dict] = {}
+
+    for item in pending:
+        matched = (
+            _nearest_activity_entry(item["upload_dt"], activity_entries)
+            if item["upload_dt"] is not None
+            else None
         )
-        results.append(UploadResult(source_url=dedupe_key, onedrive_url=web_url))
-        log.info("  Uploaded native upload → %s", web_url)
+        if matched is not None:
+            eid = matched.get("id") or id(matched)
+            groups[eid].append(item)
+            entry_by_id[eid] = matched
+        else:
+            groups[None].append(item)
+
+    # --- Phase 3: upload each group with subfolder logic ---
+    for group_key, group_items in groups.items():
+        matched_entry = entry_by_id.get(group_key) if group_key is not None else None
+        use_subfolder = len(group_items) > 1 and matched_entry is not None
+
+        if use_subfolder:
+            action_type = matched_entry.get("action_type") or ""
+            uploader = _extract_uploader_name(matched_entry)
+            event_date = _extract_entry_date(matched_entry)
+            subfolder = _event_subfolder_name(action_type, uploader, event_date)
+            target_folder = f"{base_folder}/{safe_name(subfolder)}"
+            drive.ensure_folder(target_folder)
+            log.info("  Native uploads → event subfolder: %s", subfolder)
+        else:
+            target_folder = base_folder
+            drive.ensure_folder(target_folder)
+
+        for idx, item in enumerate(group_items, start=1):
+            dedupe_key = item["dedupe_key"]
+            upload_url = item["upload_url"]
+            content = item["content"]
+            mime = item["mime"]
+            ext = item["ext"]
+            digest = item["digest"]
+            upload_date = item["upload_date"]
+
+            if use_subfolder:
+                model_safe = safe_name(info["model_name"]) or "Photo"
+                filename = f"{model_safe} - {idx}.{ext}"
+            elif matched_entry is not None:
+                uploader = _extract_uploader_name(matched_entry)
+                event_date = _extract_entry_date(matched_entry)
+                filename = build_filename(info["model_name"], uploader, event_date, ext)
+            else:
+                filename = build_filename(info["model_name"], "", upload_date, ext)
+
+            description = _build_file_description(
+                asset_name=asset_name,
+                asset_tag=asset_tag,
+                source_url=upload_url,
+                uploader=_extract_uploader_name(matched_entry) if matched_entry else "",
+                entry_date=_extract_entry_date(matched_entry) if matched_entry else upload_date,
+            )
+
+            try:
+                file_id, web_url = drive.upload_small_file(
+                    target_folder, filename, content, content_type=mime,
+                    description=description,
+                )
+            except Exception as exc:
+                log.exception("  OneDrive upload failed for upload %s: %s", dedupe_key, exc)
+                results.append(UploadResult(
+                    source_url=dedupe_key, onedrive_url="", skipped_reason="upload_failed"
+                ))
+                continue
+
+            store.record_upload(
+                asset_id=asset_id, asset_tag=safe_tag, source_url=dedupe_key,
+                content_hash=digest, onedrive_file_id=file_id, onedrive_url=web_url,
+                filename=filename,
+            )
+            results.append(UploadResult(source_url=dedupe_key, onedrive_url=web_url))
+            log.info("  Uploaded native upload → %s", web_url)
 
     return results
 
@@ -488,20 +601,25 @@ def process_asset(
     asset_name = info["name"] or asset_tag
     notes = info["notes"]
 
-    batches = _collect_url_batches(info, asset_id, cfg, snipe)
+    # Fetch activity log once — shared by URL extraction and native upload matching
+    activity_entries: List[Dict] = []
+    try:
+        activity_entries = list(snipe.iter_asset_activity(asset_id))
+    except Exception as exc:
+        log.warning("Could not fetch activity log for asset %s: %s", asset_id, exc)
+
+    batches = _collect_url_batches(info, asset_id, cfg, activity_entries)
     total_urls = sum(len(b.urls) for b in batches)
     history_urls = sum(len(b.urls) for b in batches if b.source == "activity")
 
-    if not batches:
-        return []
-
-    if history_urls:
-        log.info(
-            "Asset %s (%s): %d URL(s) (%d from history notes)",
-            asset_id, asset_tag, total_urls, history_urls,
-        )
-    else:
-        log.info("Asset %s (%s): found %d URL(s)", asset_id, asset_tag, total_urls)
+    if total_urls:
+        if history_urls:
+            log.info(
+                "Asset %s (%s): %d URL(s) (%d from history notes)",
+                asset_id, asset_tag, total_urls, history_urls,
+            )
+        else:
+            log.info("Asset %s (%s): found %d URL(s)", asset_id, asset_tag, total_urls)
 
     safe_tag = safe_asset_tag(asset_tag)
     base_folder = drive.asset_folder(info["category_name"], info["model_name"])
@@ -534,10 +652,11 @@ def process_asset(
         drive=drive,
         store=store,
         base_folder=base_folder,
+        activity_entries=activity_entries,
     )
     results.extend(upload_results)
 
-    if cfg.write_back:
+    if cfg.write_back and results:
         new_notes = _append_writeback(notes, results)
         if new_notes != notes:
             try:

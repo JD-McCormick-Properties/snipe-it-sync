@@ -358,6 +358,122 @@ def _process_batch(
     return results
 
 
+def _process_native_uploads(
+    *,
+    asset_id: int,
+    asset_name: str,
+    asset_tag: str,
+    safe_tag: str,
+    info: dict,
+    cfg: "Config",
+    snipe: SnipeITClient,
+    drive: OneDriveClient,
+    store: DedupeStore,
+    base_folder: str,
+) -> List[UploadResult]:
+    """Download native Snipe-IT file attachments and mirror them to OneDrive.
+
+    SnipeMobile uploads photos via POST /api/v1/hardware/{id}/uploads after
+    a checkin or checkout. These live as file attachments on the asset record
+    and are separate from any URLs pasted into notes.
+    """
+    results: List[UploadResult] = []
+
+    try:
+        uploads = snipe.get_asset_uploads(asset_id)
+    except Exception as exc:
+        log.warning("Could not fetch uploads for asset %s: %s", asset_id, exc)
+        return results
+
+    if not uploads:
+        return results
+
+    log.info("  %d native Snipe-IT upload(s) found", len(uploads))
+
+    for upload in uploads:
+        upload_id = upload.get("id")
+        upload_url = upload.get("url") or ""
+        upload_name = upload.get("name") or upload.get("filename") or f"upload-{upload_id}"
+
+        if not upload_id or not upload_url:
+            continue
+
+        dedupe_key = f"snipe_upload:{upload_id}"
+
+        if not cfg.force_resync and store.is_processed(asset_id, dedupe_key):
+            results.append(UploadResult(
+                source_url=dedupe_key, onedrive_url="", skipped_reason="already_uploaded"
+            ))
+            continue
+
+        log.info("  Downloading native upload: %s", upload_name)
+        content = snipe.download_upload(upload_url)
+        if not content:
+            results.append(UploadResult(
+                source_url=dedupe_key, onedrive_url="", skipped_reason="unresolved"
+            ))
+            continue
+
+        ext = upload_name.rsplit(".", 1)[-1].lower() if "." in upload_name else "jpg"
+        mime = {
+            "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            "gif": "image/gif", "webp": "image/webp",
+            "heic": "image/heic", "heif": "image/heic",
+        }.get(ext, "application/octet-stream")
+
+        content, mime, ext = normalize_image(content, mime, ext)
+        digest = hash_bytes(content)
+
+        if not cfg.force_resync and store.has_hash_for_asset(asset_id, digest):
+            log.info("  Hash already uploaded for asset %s — skipping", asset_id)
+            store.record_upload(
+                asset_id=asset_id, asset_tag=safe_tag, source_url=dedupe_key,
+                content_hash=digest, onedrive_file_id=None, onedrive_url=None,
+                filename=upload_name,
+            )
+            results.append(UploadResult(
+                source_url=dedupe_key, onedrive_url="", skipped_reason="duplicate_hash"
+            ))
+            continue
+
+        upload_date_raw = upload.get("created_at") or {}
+        upload_date = (
+            (upload_date_raw.get("datetime") or upload_date_raw.get("formatted") or "")
+            if isinstance(upload_date_raw, dict)
+            else str(upload_date_raw)
+        )
+        filename = build_filename(info["model_name"], "", upload_date, ext)
+
+        drive.ensure_folder(base_folder)
+        try:
+            file_id, web_url = drive.upload_small_file(
+                base_folder, filename, content, content_type=mime,
+                description=_build_file_description(
+                    asset_name=asset_name,
+                    asset_tag=asset_tag,
+                    source_url=upload_url,
+                    uploader="",
+                    entry_date=upload_date,
+                ),
+            )
+        except Exception as exc:
+            log.exception("  OneDrive upload failed for upload %s: %s", upload_id, exc)
+            results.append(UploadResult(
+                source_url=dedupe_key, onedrive_url="", skipped_reason="upload_failed"
+            ))
+            continue
+
+        store.record_upload(
+            asset_id=asset_id, asset_tag=safe_tag, source_url=dedupe_key,
+            content_hash=digest, onedrive_file_id=file_id, onedrive_url=web_url,
+            filename=filename,
+        )
+        results.append(UploadResult(source_url=dedupe_key, onedrive_url=web_url))
+        log.info("  Uploaded native upload → %s", web_url)
+
+    return results
+
+
 def process_asset(
     asset: dict,
     *,
@@ -405,6 +521,21 @@ def process_asset(
             base_folder=base_folder,
         )
         results.extend(batch_results)
+
+    # Native Snipe-IT file attachments (e.g. SnipeMobile checkin/checkout photos)
+    upload_results = _process_native_uploads(
+        asset_id=asset_id,
+        asset_name=asset_name,
+        asset_tag=asset_tag,
+        safe_tag=safe_tag,
+        info=info,
+        cfg=cfg,
+        snipe=snipe,
+        drive=drive,
+        store=store,
+        base_folder=base_folder,
+    )
+    results.extend(upload_results)
 
     if cfg.write_back:
         new_notes = _append_writeback(notes, results)

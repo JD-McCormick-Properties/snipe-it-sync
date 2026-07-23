@@ -121,10 +121,14 @@ class SnipeITClient:
         return self._request("GET", f"/api/v1/hardware/{asset_id}")
 
     def get_asset_uploads(self, asset_id: int) -> List[Dict[str, Any]]:
-        """Return the uploads list for an asset via a full individual fetch."""
-        data = self.get_asset(asset_id)
-        uploads = data.get("uploads")
-        return uploads if isinstance(uploads, list) else []
+        """Return file attachments for an asset via GET /hardware/{id}/files."""
+        data = self._request(
+            "GET",
+            f"/api/v1/hardware/{asset_id}/files",
+            params={"limit": 500, "offset": 0, "sort": "created_at", "order": "desc"},
+        )
+        rows = data.get("rows")
+        return rows if isinstance(rows, list) else []
 
     def download_upload(
         self, url: str, max_bytes: int = 50 * 1024 * 1024

@@ -182,7 +182,7 @@ def _event_subfolder_name(action_type: str, uploader: str, date: str) -> str:
 
 # Max gap between a native upload timestamp and an activity log entry for them
 # to be considered the same event.
-ACTIVITY_MATCH_WINDOW = timedelta(minutes=10)
+ACTIVITY_MATCH_WINDOW = timedelta(minutes=1)
 
 
 def _nearest_activity_entry(

@@ -13,7 +13,7 @@ import io
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Tuple
+from typing import Optional, Tuple
 
 from PIL import Image
 
@@ -29,6 +29,9 @@ except Exception as exc:  # pragma: no cover - environment-dependent
     log.warning("pillow-heif not available; HEIC files will be skipped: %s", exc)
     _HEIF_AVAILABLE = False
 
+
+# Grid edge for the difference hash; 16 gives a 256-bit fingerprint.
+_DHASH_SIZE = 16
 
 SAFE_TAG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 SAFE_NAME_RE = re.compile(r"[^\w\s._-]")
@@ -90,6 +93,36 @@ def build_filename(model_name: str, uploader: str, dt_str: str, extension: str) 
 def hash_bytes(content: bytes) -> str:
     """SHA-256 hex digest of image bytes."""
     return hashlib.sha256(content).hexdigest()
+
+
+def perceptual_hash(content: bytes) -> Optional[str]:
+    """Return a 256-bit difference hash (dHash) of the decoded image.
+
+    Google Photos serves the same photo with slightly different compressed
+    bytes on different fetches (metadata/encoder variation of a few hundred
+    bytes), so ``hash_bytes`` alone reports every re-fetch as a new image.
+    This hash is computed from downscaled grayscale pixels, so it is stable
+    across those variations while still distinguishing genuinely different
+    photos. Returns None if the bytes can't be decoded, in which case the
+    caller should fall back to the exact hash.
+    """
+    try:
+        img = Image.open(io.BytesIO(content)).convert("L")
+        # width is size+1 so each row yields `size` left>right comparisons
+        img = img.resize((_DHASH_SIZE + 1, _DHASH_SIZE), Image.LANCZOS)
+        px = list(img.getdata())
+        row_stride = _DHASH_SIZE + 1
+        bits = 0
+        for row in range(_DHASH_SIZE):
+            base = row * row_stride
+            for col in range(_DHASH_SIZE):
+                bits <<= 1
+                if px[base + col] > px[base + col + 1]:
+                    bits |= 1
+        return f"{bits:0{_DHASH_SIZE * _DHASH_SIZE // 4}x}"
+    except Exception as exc:
+        log.debug("Perceptual hash failed: %s", exc)
+        return None
 
 
 def normalize_image(

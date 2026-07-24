@@ -36,6 +36,7 @@ from helpers.image_utils import (
     hash_bytes,
     normalize_image,
     parse_dt,
+    perceptual_hash,
     safe_asset_tag,
     safe_name,
 )
@@ -314,10 +315,14 @@ def _process_batch(
                 batch_size += 1
                 content, mime, ext = normalize_image(photo.content, photo.mime_type, photo.extension)
                 digest = hash_bytes(content)
-                if not cfg.force_resync and store.has_hash_for_asset(asset_id, digest):
+                phash = perceptual_hash(content)
+                if not cfg.force_resync and (
+                    store.has_hash_for_asset(asset_id, digest)
+                    or store.has_perceptual_match_for_asset(asset_id, phash)
+                ):
                     continue
                 resolved_photos.append(
-                    (url, content, mime, ext, photo.final_url, digest, batch_size)
+                    (url, content, mime, ext, photo.final_url, digest, batch_size, phash)
                 )
         else:
             batch_size += 1
@@ -333,12 +338,16 @@ def _process_batch(
                 continue
             content, mime, ext = normalize_image(resolved.content, resolved.mime_type, resolved.extension)
             digest = hash_bytes(content)
-            if not cfg.force_resync and store.has_hash_for_asset(asset_id, digest):
+            phash = perceptual_hash(content)
+            if not cfg.force_resync and (
+                store.has_hash_for_asset(asset_id, digest)
+                or store.has_perceptual_match_for_asset(asset_id, phash)
+            ):
                 log.info("  Hash %s already uploaded for asset %s — skipping", digest[:10], asset_id)
                 results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="duplicate_hash"))
                 continue
             resolved_photos.append(
-                (url, content, mime, ext, resolved.final_url, digest, batch_size)
+                (url, content, mime, ext, resolved.final_url, digest, batch_size, phash)
             )
 
     if not resolved_photos:
@@ -357,7 +366,7 @@ def _process_batch(
         target_folder = base_folder
         drive.ensure_folder(target_folder)
 
-    for source_url, content, mime, ext, final_url, digest, position in resolved_photos:
+    for source_url, content, mime, ext, final_url, digest, position, phash in resolved_photos:
         if use_subfolder:
             # Inside the subfolder the model name provides context; index differentiates.
             model_safe = safe_name(info["model_name"]) or "Photo"
@@ -394,6 +403,7 @@ def _process_batch(
             onedrive_file_id=file_id,
             onedrive_url=web_url,
             filename=filename,
+            perceptual_hash=phash,
         )
         results.append(UploadResult(source_url=source_url, onedrive_url=web_url))
         log.info("  Uploaded → %s", web_url)
@@ -472,13 +482,17 @@ def _process_native_uploads(
         }.get(ext, "application/octet-stream")
         content, mime, ext = normalize_image(content, mime, ext)
         digest = hash_bytes(content)
+        phash = perceptual_hash(content)
 
-        if not cfg.force_resync and store.has_hash_for_asset(asset_id, digest):
+        if not cfg.force_resync and (
+            store.has_hash_for_asset(asset_id, digest)
+            or store.has_perceptual_match_for_asset(asset_id, phash)
+        ):
             log.info("  Hash already uploaded for asset %s — skipping", asset_id)
             store.record_upload(
                 asset_id=asset_id, asset_tag=safe_tag, source_url=dedupe_key,
                 content_hash=digest, onedrive_file_id=None, onedrive_url=None,
-                filename=upload_name,
+                filename=upload_name, perceptual_hash=phash,
             )
             results.append(UploadResult(
                 source_url=dedupe_key, onedrive_url="", skipped_reason="duplicate_hash"
@@ -508,6 +522,7 @@ def _process_native_uploads(
             "mime": mime,
             "ext": ext,
             "digest": digest,
+            "phash": phash,
             "upload_date": upload_date,
             "upload_dt": upload_dt,
         })
@@ -557,6 +572,7 @@ def _process_native_uploads(
             mime = item["mime"]
             ext = item["ext"]
             digest = item["digest"]
+            phash = item["phash"]
             upload_date = item["upload_date"]
 
             if use_subfolder:
@@ -592,7 +608,7 @@ def _process_native_uploads(
             store.record_upload(
                 asset_id=asset_id, asset_tag=safe_tag, source_url=dedupe_key,
                 content_hash=digest, onedrive_file_id=file_id, onedrive_url=web_url,
-                filename=filename,
+                filename=filename, perceptual_hash=phash,
             )
             results.append(UploadResult(source_url=dedupe_key, onedrive_url=web_url))
             log.info("  Uploaded native upload → %s", web_url)

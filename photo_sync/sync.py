@@ -264,6 +264,40 @@ def _collect_url_batches(
     return batches
 
 
+def _subfolder_filename(
+    *,
+    drive: OneDriveClient,
+    folder: str,
+    stem: str,
+    ext: str,
+    position: int,
+    replace_existing: bool,
+) -> str:
+    """Pick a numbered filename inside an event subfolder that won't clobber.
+
+    A photo's position within its batch is not stable — the album scrape can
+    return the same photos in a different order — so writing straight to
+    "stem - {position}.ext" can land on a slot already holding a different
+    photo. Normal runs therefore claim the first free number, which appends
+    genuinely new photos instead of overwriting existing ones. A forced
+    resync keeps the positional name so it rewrites in place as intended.
+    """
+    if replace_existing:
+        return f"{stem} - {position}.{ext}"
+    idx = position
+    while True:
+        candidate = f"{stem} - {idx}.{ext}"
+        try:
+            if not drive.file_exists(folder, candidate):
+                return candidate
+        except Exception as exc:
+            # If we can't tell, fall back to the positional name rather than
+            # spinning; an overwrite is better than failing the upload.
+            log.warning("  Could not check %s/%s: %s", folder, candidate, exc)
+            return candidate
+        idx += 1
+
+
 def _process_batch(
     batch: _UrlBatch,
     *,
@@ -372,7 +406,14 @@ def _process_batch(
         if use_subfolder:
             # Inside the subfolder the model name provides context; index differentiates.
             model_safe = safe_name(info["model_name"]) or "Photo"
-            filename = f"{model_safe} - {position}.{ext}"
+            filename = _subfolder_filename(
+                drive=drive,
+                folder=target_folder,
+                stem=model_safe,
+                ext=ext,
+                position=position,
+                replace_existing=cfg.force_resync,
+            )
         else:
             filename = build_filename(info["model_name"], batch.uploader, batch.date, ext)
 
@@ -579,7 +620,14 @@ def _process_native_uploads(
 
             if use_subfolder:
                 model_safe = safe_name(info["model_name"]) or "Photo"
-                filename = f"{model_safe} - {idx}.{ext}"
+                filename = _subfolder_filename(
+                    drive=drive,
+                    folder=target_folder,
+                    stem=model_safe,
+                    ext=ext,
+                    position=idx,
+                    replace_existing=cfg.force_resync,
+                )
             elif matched_entry is not None:
                 uploader = _extract_uploader_name(matched_entry)
                 event_date = _extract_entry_date(matched_entry)

@@ -47,6 +47,19 @@ class DedupeStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Add columns introduced after the original schema shipped."""
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(uploads)")}
+        if "perceptual_hash" not in existing:
+            conn.execute("ALTER TABLE uploads ADD COLUMN perceptual_hash TEXT")
+            log.info("Added perceptual_hash column to dedupe DB")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_uploads_phash "
+            "ON uploads (asset_id, perceptual_hash)"
+        )
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -81,6 +94,23 @@ class DedupeStore:
             ).fetchone()
         return row is not None
 
+    def has_perceptual_match_for_asset(
+        self, asset_id: int, perceptual_hash: Optional[str]
+    ) -> bool:
+        """True if this asset already has a visually identical image uploaded.
+
+        Catches the case where a source re-serves the same photo with
+        different compressed bytes, which ``has_hash_for_asset`` misses.
+        """
+        if not perceptual_hash:
+            return False
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM uploads WHERE asset_id = ? AND perceptual_hash = ?",
+                (asset_id, perceptual_hash),
+            ).fetchone()
+        return row is not None
+
     def count_for_asset(self, asset_id: int) -> int:
         with self._conn() as conn:
             row = conn.execute(
@@ -102,14 +132,16 @@ class DedupeStore:
         onedrive_file_id: Optional[str],
         onedrive_url: Optional[str],
         filename: str,
+        perceptual_hash: Optional[str] = None,
     ) -> None:
         with self._conn() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO uploads
                   (asset_id, asset_tag, source_url, content_hash,
-                   onedrive_file_id, onedrive_url, filename, uploaded_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   onedrive_file_id, onedrive_url, filename, uploaded_at,
+                   perceptual_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     asset_id,
@@ -120,6 +152,7 @@ class DedupeStore:
                     onedrive_url,
                     filename,
                     int(time.time()),
+                    perceptual_hash,
                 ),
             )
         log.debug(

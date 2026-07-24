@@ -131,11 +131,19 @@ class SnipeITClient:
         return rows if isinstance(rows, list) else []
 
     def download_upload(
-        self, url: str, max_bytes: int = 50 * 1024 * 1024
+        self, asset_id: int, file_id: int, max_bytes: int = 50 * 1024 * 1024
     ) -> Optional[bytes]:
-        """Download a Snipe-IT file attachment using the API session credentials."""
+        """Download a file attachment via GET /api/v1/hardware/{id}/files/{fileId}.
+
+        The ``url`` field on a file row points at a web route that requires
+        session-cookie auth and 403s for API tokens — the API route below is
+        the one that accepts a Bearer token.
+        """
+        url = f"{self.base_url}/api/v1/hardware/{asset_id}/files/{file_id}"
         try:
-            resp = self.session.get(url, timeout=60, stream=True)
+            resp = self.session.get(
+                url, timeout=60, stream=True, headers={"Accept": "*/*"}
+            )
             resp.raise_for_status()
             chunks: List[bytes] = []
             total = 0
@@ -146,7 +154,16 @@ class SnipeITClient:
                         log.warning("Upload file too large (>50 MB), skipping: %s", url)
                         return None
                     chunks.append(chunk)
-            return b"".join(chunks)
+            content = b"".join(chunks)
+            # Snipe-IT answers some failures with HTTP 200 and a JSON error body.
+            if content[:1] in (b"{", b"["):
+                log.warning(
+                    "Upload %s returned a JSON body instead of file data: %s",
+                    file_id,
+                    content[:200].decode("utf-8", "replace"),
+                )
+                return None
+            return content
         except Exception as exc:
             log.warning("Failed to download upload %s: %s", url, exc)
             return None

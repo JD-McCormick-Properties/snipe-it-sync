@@ -432,7 +432,7 @@ def _process_native_uploads(
         upload_url = upload.get("url") or ""
         upload_name = upload.get("name") or upload.get("filename") or f"upload-{upload_id}"
 
-        if not upload_id or not upload_url:
+        if not upload_id:
             continue
 
         dedupe_key = f"snipe_upload:{upload_id}"
@@ -444,7 +444,7 @@ def _process_native_uploads(
             continue
 
         log.info("  Downloading native upload: %s", upload_name)
-        content = snipe.download_upload(upload_url)
+        content = snipe.download_upload(asset_id, upload_id)
         if not content:
             results.append(UploadResult(
                 source_url=dedupe_key, onedrive_url="", skipped_reason="unresolved"

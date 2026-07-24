@@ -184,11 +184,12 @@ def _upgrade_google_photos_url(url: str) -> str:
     """
     if "googleusercontent.com" not in url and "ggpht.com" not in url:
         return url
-    # Google's CDN uses '=' as a separator for size parameters
-    if "=" in url:
-        base, _ = url.split("=", 1)
-        return f"{base}=s0"  # s0 = original size
-    return url
+    # Google's CDN uses '=' as a separator for size parameters. A scraped URL
+    # may arrive with or without one depending on how far the album grid had
+    # rendered; always force =s0 so the same photo yields the same original
+    # bytes on every run (an un-suffixed URL serves a small thumbnail).
+    base = url.split("=", 1)[0]
+    return f"{base}=s0"  # s0 = original size
 
 
 def is_google_photos_share(url: str) -> bool:

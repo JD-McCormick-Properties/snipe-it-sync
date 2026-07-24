@@ -283,8 +283,13 @@ def _process_batch(
     expands to multiple images).
     """
     results: List[UploadResult] = []
-    # Each item: (source_url, content, mime, ext, final_url, digest)
+    # Each item: (source_url, content, mime, ext, final_url, digest, position)
+    # ``position`` is the photo's slot within the whole batch, counted before
+    # dedupe filtering — it drives the filename, so a photo keeps the same
+    # name on every run even when its siblings are skipped as already-uploaded.
     resolved_photos: List[tuple] = []
+    # Every photo this batch yielded, including ones filtered out below.
+    batch_size = 0
 
     for url in batch.urls:
         if is_icloud_share(url):
@@ -306,12 +311,16 @@ def _process_batch(
                 results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="unresolved"))
                 continue
             for photo in photos:
+                batch_size += 1
                 content, mime, ext = normalize_image(photo.content, photo.mime_type, photo.extension)
                 digest = hash_bytes(content)
                 if not cfg.force_resync and store.has_hash_for_asset(asset_id, digest):
                     continue
-                resolved_photos.append((url, content, mime, ext, photo.final_url, digest))
+                resolved_photos.append(
+                    (url, content, mime, ext, photo.final_url, digest, batch_size)
+                )
         else:
+            batch_size += 1
             if not cfg.force_resync and store.is_processed(asset_id, url):
                 log.debug("  %s — already processed, skipping", url)
                 results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="already_uploaded"))
@@ -328,13 +337,17 @@ def _process_batch(
                 log.info("  Hash %s already uploaded for asset %s — skipping", digest[:10], asset_id)
                 results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="duplicate_hash"))
                 continue
-            resolved_photos.append((url, content, mime, ext, resolved.final_url, digest))
+            resolved_photos.append(
+                (url, content, mime, ext, resolved.final_url, digest, batch_size)
+            )
 
     if not resolved_photos:
         return results
 
-    # Decide target folder — subfolder when multiple unique photos in one event.
-    use_subfolder = len(resolved_photos) > 1
+    # Decide target folder — subfolder when the event produced multiple photos.
+    # Keyed off the full batch, not the post-dedupe list, so a photo lands in
+    # the same folder whether or not its siblings were filtered out this run.
+    use_subfolder = batch_size > 1
     if use_subfolder:
         subfolder = _event_subfolder_name(batch.action_type, batch.uploader, batch.date)
         target_folder = f"{base_folder}/{safe_name(subfolder)}"
@@ -344,11 +357,11 @@ def _process_batch(
         target_folder = base_folder
         drive.ensure_folder(target_folder)
 
-    for idx, (source_url, content, mime, ext, final_url, digest) in enumerate(resolved_photos, start=1):
+    for source_url, content, mime, ext, final_url, digest, position in resolved_photos:
         if use_subfolder:
             # Inside the subfolder the model name provides context; index differentiates.
             model_safe = safe_name(info["model_name"]) or "Photo"
-            filename = f"{model_safe} - {idx}.{ext}"
+            filename = f"{model_safe} - {position}.{ext}"
         else:
             filename = build_filename(info["model_name"], batch.uploader, batch.date, ext)
 

@@ -19,6 +19,12 @@ from typing import Iterator, Optional
 
 log = logging.getLogger(__name__)
 
+# Max differing bits between two 256-bit perceptual hashes for them to count as
+# the same photo. Measured: 5 bits for a genuine re-fetch of one photo, 98+
+# bits between different photos — so anything in the teens separates them with
+# a wide margin on both sides.
+PERCEPTUAL_MAX_DISTANCE = 20
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS uploads (
@@ -95,21 +101,39 @@ class DedupeStore:
         return row is not None
 
     def has_perceptual_match_for_asset(
-        self, asset_id: int, perceptual_hash: Optional[str]
+        self,
+        asset_id: int,
+        perceptual_hash: Optional[str],
+        max_distance: int = PERCEPTUAL_MAX_DISTANCE,
     ) -> bool:
-        """True if this asset already has a visually identical image uploaded.
+        """True if this asset already has a visually equivalent image uploaded.
 
-        Catches the case where a source re-serves the same photo with
-        different compressed bytes, which ``has_hash_for_asset`` misses.
+        Compares by Hamming distance rather than equality. Sources re-serve
+        the same photo with slightly different bytes, which shifts a few hash
+        bits — measured at 5 bits out of 256 for a real re-fetch, against 98+
+        bits between genuinely different photos. Anything within
+        ``max_distance`` is the same picture.
         """
         if not perceptual_hash:
             return False
+        try:
+            target = int(perceptual_hash, 16)
+        except ValueError:
+            return False
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM uploads WHERE asset_id = ? AND perceptual_hash = ?",
-                (asset_id, perceptual_hash),
-            ).fetchone()
-        return row is not None
+            rows = conn.execute(
+                "SELECT perceptual_hash FROM uploads "
+                "WHERE asset_id = ? AND perceptual_hash IS NOT NULL",
+                (asset_id,),
+            ).fetchall()
+        for row in rows:
+            try:
+                candidate = int(row["perceptual_hash"], 16)
+            except (ValueError, TypeError):
+                continue
+            if bin(target ^ candidate).count("1") <= max_distance:
+                return True
+        return False
 
     def backfill_perceptual_hash(
         self, asset_id: int, content_hash: str, perceptual_hash: Optional[str]

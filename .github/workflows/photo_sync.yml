@@ -12,6 +12,13 @@ on:
         required: false
         default: "false"
 
+# Two syncs must never overlap: they restore the same dedupe DB snapshot,
+# duplicate each other's uploads, and only one's cache save survives — so the
+# other's record of what it uploaded is lost and re-uploaded next run.
+concurrency:
+  group: photo-sync
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest

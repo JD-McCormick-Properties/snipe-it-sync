@@ -6,6 +6,12 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch:
 
+# Overlapping runs would both read the same seen-IDs state and each send a
+# notification for the same checkout — duplicate emails to the recipients.
+concurrency:
+  group: ac-unit-notify
+  cancel-in-progress: false
+
 # SETUP REQUIRED — one-time steps before this workflow will work:
 #
 # 1. Azure app permissions:

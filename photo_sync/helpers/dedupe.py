@@ -111,6 +111,24 @@ class DedupeStore:
             ).fetchone()
         return row is not None
 
+    def backfill_perceptual_hash(
+        self, asset_id: int, content_hash: str, perceptual_hash: Optional[str]
+    ) -> None:
+        """Attach a perceptual hash to an existing row that predates the column.
+
+        Called when a photo is skipped by exact-hash match: without this the
+        row keeps a NULL perceptual_hash and stays vulnerable to the source
+        re-serving the same image with different bytes.
+        """
+        if not perceptual_hash:
+            return
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE uploads SET perceptual_hash = ? "
+                "WHERE asset_id = ? AND content_hash = ? AND perceptual_hash IS NULL",
+                (perceptual_hash, asset_id, content_hash),
+            )
+
     def count_for_asset(self, asset_id: int) -> int:
         with self._conn() as conn:
             row = conn.execute(

@@ -316,11 +316,12 @@ def _process_batch(
                 content, mime, ext = normalize_image(photo.content, photo.mime_type, photo.extension)
                 digest = hash_bytes(content)
                 phash = perceptual_hash(content)
-                if not cfg.force_resync and (
-                    store.has_hash_for_asset(asset_id, digest)
-                    or store.has_perceptual_match_for_asset(asset_id, phash)
-                ):
-                    continue
+                if not cfg.force_resync:
+                    if store.has_hash_for_asset(asset_id, digest):
+                        store.backfill_perceptual_hash(asset_id, digest, phash)
+                        continue
+                    if store.has_perceptual_match_for_asset(asset_id, phash):
+                        continue
                 resolved_photos.append(
                     (url, content, mime, ext, photo.final_url, digest, batch_size, phash)
                 )
@@ -339,13 +340,14 @@ def _process_batch(
             content, mime, ext = normalize_image(resolved.content, resolved.mime_type, resolved.extension)
             digest = hash_bytes(content)
             phash = perceptual_hash(content)
-            if not cfg.force_resync and (
-                store.has_hash_for_asset(asset_id, digest)
-                or store.has_perceptual_match_for_asset(asset_id, phash)
-            ):
-                log.info("  Hash %s already uploaded for asset %s — skipping", digest[:10], asset_id)
-                results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="duplicate_hash"))
-                continue
+            if not cfg.force_resync:
+                exact = store.has_hash_for_asset(asset_id, digest)
+                if exact:
+                    store.backfill_perceptual_hash(asset_id, digest, phash)
+                if exact or store.has_perceptual_match_for_asset(asset_id, phash):
+                    log.info("  Hash %s already uploaded for asset %s — skipping", digest[:10], asset_id)
+                    results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="duplicate_hash"))
+                    continue
             resolved_photos.append(
                 (url, content, mime, ext, resolved.final_url, digest, batch_size, phash)
             )

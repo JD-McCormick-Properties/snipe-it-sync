@@ -13,6 +13,15 @@ on:
         options:
           - "false"
           - "true"
+      which:
+        description: "Which pass to run"
+        required: true
+        default: "both"
+        type: choice
+        options:
+          - "both"
+          - "thumbnails"
+          - "duplicates"
 
 concurrency:
   group: photo-sync
@@ -59,8 +68,8 @@ jobs:
           ONEDRIVE_BASE_FOLDER: ${{ vars.ONEDRIVE_BASE_FOLDER || 'AssetPhotos' }}
           LOG_LEVEL: INFO
         run: |
+          ARGS="--pass ${{ github.event.inputs.which }}"
           if [ "${{ github.event.inputs.delete }}" = "true" ]; then
-            python cleanup_orphans.py --delete
-          else
-            python cleanup_orphans.py
+            ARGS="$ARGS --delete"
           fi
+          python cleanup_orphans.py $ARGS

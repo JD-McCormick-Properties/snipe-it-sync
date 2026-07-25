@@ -197,10 +197,28 @@ class OneDriveClient:
 
         return found
 
+    def download_item(self, item_id: str) -> Optional[bytes]:
+        """Fetch the bytes of a drive item by id. None if it can't be read."""
+        try:
+            r = requests.get(
+                f"{self._items_root()}/{item_id}/content",
+                headers=self._headers(),
+                timeout=self.timeout,
+                allow_redirects=True,
+            )
+            r.raise_for_status()
+            return r.content
+        except Exception as exc:
+            log.warning("Could not download item %s: %s", item_id, exc)
+            return None
+
+    def _items_root(self) -> str:
+        return f"{self._drive_root().rsplit('/root', 1)[0]}/items"
+
     def delete_item(self, item_id: str) -> None:
         """Delete a drive item by id. Sends it to the recycle bin."""
         r = requests.delete(
-            f"{self._drive_root().rsplit('/root', 1)[0]}/items/{item_id}",
+            f"{self._items_root()}/{item_id}",
             headers=self._headers(),
             timeout=self.timeout,
         )

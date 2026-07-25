@@ -245,6 +245,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         log.info("Dry run — nothing deleted. Re-run with --delete to remove these.")
         return 0
 
+    # The credentials can reach the whole drive, and delete_item takes a bare
+    # item id. Re-check every path against the configured base folder so a
+    # candidate from outside it can never be deleted, whatever produced it.
+    base = cfg.onedrive_base_folder.strip("/")
+    outside = [c for c in candidates if not c["path"].startswith(f"{base}/")]
+    if outside:
+        log.error("Refusing to delete — %d candidate(s) outside %s:", len(outside), base)
+        for c in outside[:10]:
+            log.error("    %s", c["path"])
+        return 1
+
     deleted = 0
     for c in candidates:
         try:

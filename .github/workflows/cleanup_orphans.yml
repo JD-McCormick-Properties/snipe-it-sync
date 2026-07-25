@@ -1,0 +1,66 @@
+name: Cleanup Orphaned Thumbnails
+
+# Manual only. Reports leftover thumbnail uploads by default; deleting
+# requires explicitly setting the delete input to "true".
+on:
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: 'Actually delete the files (leave "false" to just list them)'
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: photo-sync
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        working-directory: photo_sync
+        run: pip install -r requirements.txt
+
+      # Read-only: the cleanup needs the DB to know which files the sync
+      # uploaded, but must never write it back and change sync state.
+      - name: Restore dedupe DB
+        uses: actions/cache/restore@v4
+        with:
+          path: photo_sync/photo_sync_state.db
+          key: photo-sync-db-never-matches
+          restore-keys: |
+            photo-sync-db-
+
+      - name: Run cleanup
+        working-directory: photo_sync
+        env:
+          SNIPE_URL: ${{ secrets.SNIPE_URL }}
+          SNIPE_API_KEY: ${{ secrets.SNIPE_API_KEY }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
+          ONEDRIVE_DRIVE_ID: ${{ secrets.ONEDRIVE_DRIVE_ID }}
+          ONEDRIVE_BASE_FOLDER: ${{ vars.ONEDRIVE_BASE_FOLDER || 'AssetPhotos' }}
+          LOG_LEVEL: INFO
+        run: |
+          if [ "${{ github.event.inputs.delete }}" = "true" ]; then
+            python cleanup_orphans.py --delete
+          else
+            python cleanup_orphans.py
+          fi

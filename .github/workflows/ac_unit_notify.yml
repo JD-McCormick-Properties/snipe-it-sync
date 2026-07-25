@@ -1,9 +1,13 @@
 name: AC Unit Checkout Notifier
 
-# Runs every 30 minutes so notifications land within ~30 min of a checkout.
+# Runs every 90 minutes. GitHub throttles high-frequency cron on shared
+# runners — the previous */30 schedule actually fired about every 80 minutes
+# (18:57, 20:25, 21:37, 23:01), so this matches the real cadence instead of
+# advertising one it never hit.
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 0/3 * * *"
+    - cron: "30 1/3 * * *"
   workflow_dispatch:
 
 # Overlapping runs would both read the same seen-IDs state and each send a

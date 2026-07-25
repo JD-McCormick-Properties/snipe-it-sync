@@ -160,6 +160,53 @@ class OneDriveClient:
 
         return last_resp
 
+    def iter_files(self, folder_path: str) -> List[Dict[str, Any]]:
+        """Return every file under folder_path, recursing into subfolders.
+
+        Each entry carries id, name, size, path (relative to the drive root),
+        and lastModifiedDateTime. Folders are traversed but not returned.
+        Missing folders yield an empty list rather than raising.
+        """
+        found: List[Dict[str, Any]] = []
+        stack = [folder_path.strip("/")]
+
+        while stack:
+            current = stack.pop()
+            url = f"{self._path_url(current)}:/children?$top=200"
+            while url:
+                r = requests.get(url, headers=self._headers(), timeout=self.timeout)
+                if r.status_code == 404:
+                    break
+                r.raise_for_status()
+                payload = r.json()
+                for item in payload.get("value", []):
+                    name = item.get("name", "")
+                    if "folder" in item:
+                        stack.append(f"{current}/{name}")
+                        continue
+                    found.append(
+                        {
+                            "id": item.get("id"),
+                            "name": name,
+                            "size": item.get("size", 0),
+                            "path": f"{current}/{name}",
+                            "modified": item.get("lastModifiedDateTime", ""),
+                        }
+                    )
+                url = payload.get("@odata.nextLink")
+
+        return found
+
+    def delete_item(self, item_id: str) -> None:
+        """Delete a drive item by id. Sends it to the recycle bin."""
+        r = requests.delete(
+            f"{self._drive_root().rsplit('/root', 1)[0]}/items/{item_id}",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        if r.status_code not in (204, 404):
+            r.raise_for_status()
+
     def file_exists(self, folder_path: str, filename: str) -> bool:
         url = self._path_url(f"{folder_path.strip('/')}/{filename}")
         r = requests.get(url, headers=self._headers(), timeout=self.timeout)

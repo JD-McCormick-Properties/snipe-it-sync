@@ -76,12 +76,16 @@ def load_config() -> Config:
 @dataclass
 class NotifyState:
     seen_ids: Set[int] = field(default_factory=set)
+    # False when no state file was found. The Actions cache can be evicted or
+    # miss, and treating that as "everything is new" would email a
+    # notification for every recent checkout at once.
+    loaded_from_disk: bool = False
 
     @classmethod
     def load(cls, path: str) -> "NotifyState":
         try:
             data = json.loads(Path(path).read_text())
-            return cls(seen_ids=set(data.get("seen_ids", [])))
+            return cls(seen_ids=set(data.get("seen_ids", [])), loaded_from_disk=True)
         except (FileNotFoundError, json.JSONDecodeError):
             return cls()
 
@@ -122,7 +126,12 @@ class SnipeClient:
         while True:
             data = self._get(
                 "/api/v1/hardware",
-                {"category_id": category_id, "limit": 500, "offset": offset},
+                {
+                    "category_id": category_id, "limit": 500, "offset": offset,
+                    # Unsorted offset paging can repeat one row and skip
+                    # another, which would drop an AC unit from the watch list.
+                    "sort": "id", "order": "asc",
+                },
             )
             rows = data.get("rows") or []
             for row in rows:
@@ -363,39 +372,52 @@ def main() -> int:
     checkouts = snipe.get_recent_checkouts()
     log.info("%d recent checkout events fetched", len(checkouts))
 
-    notified = 0
-    for entry in checkouts:
-        entry_id = entry.get("id")
-        if not entry_id:
-            continue
-        if entry_id in state.seen_ids:
-            continue
+    if not state.loaded_from_disk:
+        state.seen_ids.update(e["id"] for e in checkouts if e.get("id"))
+        state.save(cfg.state_path)
+        log.warning(
+            "No prior state file — recorded %d existing checkout(s) without "
+            "notifying. Future checkouts will be emailed normally.",
+            len(state.seen_ids),
+        )
+        return 0
 
-        item = entry.get("item") or {}
-        asset_id = item.get("id")
+    notified = failed = 0
+    try:
+        for entry in checkouts:
+            entry_id = entry.get("id")
+            if not entry_id or entry_id in state.seen_ids:
+                continue
 
-        state.seen_ids.add(entry_id)
+            item = entry.get("item") or {}
+            asset_id = item.get("id")
 
-        if asset_id not in ac_asset_ids:
-            continue
+            if asset_id not in ac_asset_ids:
+                # Nothing to send, so recording it just saves work next run.
+                state.seen_ids.add(entry_id)
+                continue
 
-        log.info("New AC unit checkout — asset_id=%d entry_id=%d", asset_id, entry_id)
-        try:
-            asset = snipe.get_asset(asset_id)
-            history = snipe.get_asset_history(asset_id)
-            subject, html = build_email(asset, entry, history, cfg.snipe_url)
-            mailer.send(cfg.notify_to, subject, html)
-            log.info(
-                "Notified %s — asset %s",
-                cfg.notify_to,
-                asset.get("asset_tag"),
-            )
+            log.info("New AC unit checkout — asset_id=%d entry_id=%d", asset_id, entry_id)
+            try:
+                asset = snipe.get_asset(asset_id)
+                history = snipe.get_asset_history(asset_id)
+                subject, html = build_email(asset, entry, history, cfg.snipe_url)
+                mailer.send(cfg.notify_to, subject, html)
+            except Exception:
+                # Leave it unseen so the next run retries rather than dropping
+                # the notification silently.
+                failed += 1
+                log.exception("Failed to notify for asset_id=%s — will retry", asset_id)
+                continue
+
+            state.seen_ids.add(entry_id)
             notified += 1
-        except Exception:
-            log.exception("Failed to send notification for asset_id=%d", asset_id)
+            log.info("Notified %s — asset %s", cfg.notify_to, asset.get("asset_tag"))
+    finally:
+        # Persist regardless, so sends that already went out are never repeated.
+        state.save(cfg.state_path)
 
-    state.save(cfg.state_path)
-    log.info("Done. notified=%d", notified)
+    log.info("Done. notified=%d failed=%d", notified, failed)
     return 0
 
 

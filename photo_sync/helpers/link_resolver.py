@@ -176,6 +176,16 @@ def _find_image_url_in_html(html: str, base_url: str) -> Tuple[Optional[str], st
 # ---------------------------------------------------------------------- #
 # Provider-specific tweaks
 # ---------------------------------------------------------------------- #
+# Google Photos album rendering. The previous fixed 8s settle plus six 2s
+# scrolls cost 20s per album no matter its size, which dominated sync runtime.
+# These bound an adaptive wait that exits as soon as the grid stops growing.
+GPHOTOS_RENDER_BUDGET_MS = 12_000   # longest we'll wait for the first image
+GPHOTOS_POLL_MS = 500               # how often we check while waiting
+GPHOTOS_SCROLL_WAIT_MS = 1_000      # settle time after each scroll
+GPHOTOS_MAX_SCROLLS = 12            # ceiling for very large albums
+GPHOTOS_STABLE_ROUNDS = 2           # consecutive no-growth rounds before stopping
+
+
 def _upgrade_google_photos_url(url: str) -> str:
     """Google Photos thumbnails come back at low resolution by default.
 
@@ -864,23 +874,50 @@ def resolve_google_photos_album(
                 )
                 page = context.new_page()
                 page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
-                # Give the SPA more time to render the album grid.
-                page.wait_for_timeout(8_000)
 
-                # Scroll to trigger lazy loading; pause between each scroll
-                # to give React/Vue time to mount new thumbnails.
-                # document.body can still be null here if the SPA is mid-load,
-                # and an exception out of evaluate() aborts the whole album —
-                # losing every photo in it for this run. Fall back to
-                # documentElement and skip the scroll rather than throwing.
-                for _ in range(6):
-                    page.evaluate(
-                        "() => { const el = document.body || document.documentElement;"
-                        " if (el) window.scrollTo(0, el.scrollHeight); }"
-                    )
-                    page.wait_for_timeout(2_000)
+                def candidates() -> List[str]:
+                    """Current image candidates, or [] if the page isn't ready."""
+                    try:
+                        return page.evaluate(extract_js) or []
+                    except Exception:
+                        return []
 
-                raw_urls = page.evaluate(extract_js) or []
+                # Wait for the album grid to render. Polling beats a fixed
+                # sleep: a one-photo album is ready in well under a second,
+                # while a slow one still gets the full budget.
+                found: List[str] = []
+                for _ in range(int(GPHOTOS_RENDER_BUDGET_MS / GPHOTOS_POLL_MS)):
+                    found = candidates()
+                    if found:
+                        break
+                    page.wait_for_timeout(GPHOTOS_POLL_MS)
+
+                # Scroll to trigger lazy loading, stopping once the count holds
+                # steady rather than always scrolling a fixed number of times.
+                # document.body can still be null if the SPA is mid-load, and an
+                # exception out of evaluate() aborts the whole album — losing
+                # every photo in it for this run. Fall back to documentElement
+                # and skip the scroll rather than throwing.
+                stable = 0
+                for _ in range(GPHOTOS_MAX_SCROLLS):
+                    try:
+                        page.evaluate(
+                            "() => { const el = document.body || document.documentElement;"
+                            " if (el) window.scrollTo(0, el.scrollHeight); }"
+                        )
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(GPHOTOS_SCROLL_WAIT_MS)
+                    now = candidates()
+                    if len(now) > len(found):
+                        found, stable = now, 0
+                        continue
+                    found = now or found
+                    stable += 1
+                    if stable >= GPHOTOS_STABLE_ROUNDS:
+                        break
+
+                raw_urls = candidates() or found
                 log.debug(
                     "Google Photos page %s yielded %d raw image candidate(s)",
                     url, len(raw_urls),

@@ -328,7 +328,10 @@ def _process_batch(
 
     for url in batch.urls:
         if is_icloud_share(url):
-            log.warning("  MANUAL ACTION REQUIRED — iCloud: %s", url)
+            # Apple blocks headless browsers, so these can only be exported by
+            # hand. Techs attach photos through SnipeMobile now, so these are
+            # legacy links nobody intends to chase — counted, not shouted about.
+            log.info("  Skipping iCloud link (manual export only): %s", url)
             results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="icloud_manual"))
             continue
 
@@ -948,25 +951,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     if icloud_pending:
-        log.warning(
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        )
-        log.warning(
-            "MANUAL ACTION REQUIRED — %d iCloud URL(s) could not be "
-            "processed automatically.",
+        # Not actionable any more: photos come from SnipeMobile attachments,
+        # so these legacy links are listed once at INFO and left alone.
+        log.info(
+            "%d iCloud link(s) skipped (Apple blocks automated export):",
             len(icloud_pending),
         )
-        log.warning(
-            "Use the iCloud web workaround (see photo_sync/README.md, "
-            "'Shared link resolution' section) to export these photos "
-            "manually and upload them to OneDrive."
-        )
-        log.warning("Affected assets:")
         for asset_tag, url in icloud_pending:
-            log.warning("  [%s]  %s", asset_tag, url)
-        log.warning(
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        )
+            log.info("  [%s]  %s", asset_tag, url)
 
     return 0
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-from conftest import encode, make_photo
+from conftest import encode
 
 from helpers.image_utils import (
     build_filename,
@@ -76,9 +76,10 @@ def _distance(a: str, b: str) -> int:
 # --------------------------------------------------------------------- #
 # Date parsing
 #
-# parse_dt used to fall back to datetime.now() for Snipe-IT's lowercase
-# "9:01am", so filenames got stamped with the run time and every run wrote
-# the same photo under a new name.
+# When parse_dt can't read a date it returns now(), which stamps filenames
+# with the run time instead of the event time — every run then writes the
+# same photo under a new name. These pin the formats Snipe-IT actually
+# emits so that fallback stays unreachable for real input.
 # --------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "text,expected",

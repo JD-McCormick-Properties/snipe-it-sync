@@ -42,7 +42,6 @@ from helpers.image_utils import parse_dt, perceptual_hash, safe_name
 from helpers.onedrive import OneDriveClient
 from helpers.snipeit import SnipeITClient, summarize_asset
 from sync import (
-    _action_label,
     _configure_logging,
     _event_subfolder_name,
     _extract_entry_date,

@@ -153,13 +153,6 @@ class DedupeStore:
                 (perceptual_hash, asset_id, content_hash),
             )
 
-    def count_for_asset(self, asset_id: int) -> int:
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS c FROM uploads WHERE asset_id = ?",
-                (asset_id,),
-            ).fetchone()
-        return int(row["c"]) if row else 0
 
     # ------------------------------------------------------------------ #
     # Mutations

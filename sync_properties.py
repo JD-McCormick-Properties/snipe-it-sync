@@ -263,6 +263,11 @@ def sync_units(all_locs=None):
     # retried and rejected on every run.
     all_names = {html.unescape(loc["name"]).strip().lower() for loc in all_locs}
 
+    # Snipe-IT location id -> its display name, for qualifying unit names.
+    name_by_id = {
+        loc["id"]: html.unescape(loc["name"]).strip() for loc in all_locs
+    }
+
     created = skipped = unmatched = failed = blocked = 0
 
     for prop_full, units in sorted(unit_map.items()):
@@ -280,28 +285,41 @@ def sync_units(all_locs=None):
             continue
 
         prop_subs = existing_subs.get(parent_snipeit_id, {})
-        new_units = []
-        taken_elsewhere = []
+        parent_name = name_by_id.get(parent_snipeit_id, "")
+
+        # Names are globally unique in Snipe-IT, so a bare unit like "122" can
+        # only exist once across every property. When it's already taken, fall
+        # back to qualifying it with the parent — "Seminole Woods - 122".
+        # Both spellings are checked for existence so a qualified unit isn't
+        # recreated under its bare name on the next run.
+        to_create = []          # (display_name, was_qualified)
+        existing_count = 0
         for u in units:
-            key = u.strip().lower()
-            if key in prop_subs:
-                continue
-            if key in all_names:
-                taken_elsewhere.append(u)
+            bare = u.strip()
+            qualified = f"{parent_name} - {bare}" if parent_name else bare
+            if bare.lower() in prop_subs or qualified.lower() in prop_subs:
+                existing_count += 1
+            elif bare.lower() not in all_names:
+                to_create.append((bare, False))
+            elif qualified.lower() not in all_names:
+                to_create.append((qualified, True))
             else:
-                new_units.append(u)
-        existing_count = len(units) - len(new_units) - len(taken_elsewhere)
+                blocked += 1
+                print(f"  ⚠️  {bare!r} and {qualified!r} are both taken — skipping")
 
+        qualified_count = sum(1 for _, q in to_create if q)
         print(f"{prop_full}")
-        note = f", {len(taken_elsewhere)} name already used elsewhere" if taken_elsewhere else ""
-        print(f"  {existing_count} existing, {len(new_units)} to create{note}")
-        for u in taken_elsewhere:
-            print(f"  ⚠️  cannot create {u!r} — Snipe-IT location names must be globally unique")
-        blocked += len(taken_elsewhere)
+        note = f", {qualified_count} qualified with the property name" if qualified_count else ""
+        print(f"  {existing_count} existing, {len(to_create)} to create{note}")
+        new_units = to_create
 
-        for unit_name in new_units:
+        for unit_name, was_qualified in new_units:
             if create_sublocation(unit_name, parent_snipeit_id):
                 created += 1
+                # Keep the in-run view current so later properties don't
+                # collide with a name we just took.
+                all_names.add(unit_name.lower())
+                prop_subs[unit_name.lower()] = None
             else:
                 failed += 1
 
@@ -310,7 +328,7 @@ def sync_units(all_locs=None):
     print(f"\nUnit sync summary:")
     print(f"  Created:  {created}")
     print(f"  Failed:   {failed}")
-    print(f"  Blocked (name taken elsewhere): {blocked}")
+    print(f"  Blocked (bare and qualified both taken): {blocked}")
     print(f"  Skipped:  {skipped}")
     print(f"  Unmatched properties: {unmatched}")
 

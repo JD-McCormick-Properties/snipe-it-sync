@@ -13,6 +13,30 @@ HEADERS = {
 
 UNIT_DIRECTORY_CSV = os.environ.get("UNIT_DIRECTORY_CSV", "unit_directory.csv")
 
+# Requests never had a timeout; a hung connection would stall the whole run.
+TIMEOUT = 30
+
+
+class SnipeError(RuntimeError):
+    """A write Snipe-IT rejected."""
+
+
+def check(resp):
+    """Return the response payload, raising if Snipe-IT rejected the write.
+
+    Snipe-IT answers validation failures with HTTP 200 and a body of
+    {"status": "error", "messages": ...}, so raise_for_status() alone reports
+    a failed write as a success.
+    """
+    resp.raise_for_status()
+    try:
+        data = resp.json()
+    except ValueError:
+        return {}
+    if isinstance(data, dict) and data.get("status") == "error":
+        raise SnipeError(data.get("messages") or data)
+    return data
+
 # -------------------------------
 # Get ALL locations (pagination)
 # -------------------------------
@@ -23,7 +47,7 @@ def get_all_locations():
 
     while True:
         url = f"{SNIPE_URL}/api/v1/locations?limit={limit}&offset={offset}"
-        r = requests.get(url, headers=HEADERS)
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         r.raise_for_status()
 
         data = r.json()
@@ -70,11 +94,17 @@ def create_location(row):
     r = requests.post(
         f"{SNIPE_URL}/api/v1/locations",
         json=payload,
-        headers=HEADERS
+        headers=HEADERS,
+        timeout=TIMEOUT,
     )
 
-    r.raise_for_status()
+    try:
+        check(r)
+    except SnipeError as exc:
+        print(f"❌ Create failed: {payload['name']} — {exc}")
+        return False
     print(f"✅ Created: {payload['name']}")
+    return True
 
 
 # -------------------------------
@@ -117,10 +147,15 @@ def update_location(existing, row):
     r = requests.put(
         f"{SNIPE_URL}/api/v1/locations/{loc_id}",
         json=payload,
-        headers=HEADERS
+        headers=HEADERS,
+        timeout=TIMEOUT,
     )
 
-    r.raise_for_status()
+    try:
+        check(r)
+    except SnipeError as exc:
+        print(f"❌ Update failed: {name} — {exc}")
+        return None
     print(f"🔄 Updated: {name}")
     return True
 
@@ -135,7 +170,7 @@ def get_all_locations_raw():
     limit = 500
     while True:
         url = f"{SNIPE_URL}/api/v1/locations?limit={limit}&offset={offset}"
-        r = requests.get(url, headers=HEADERS)
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         r.raise_for_status()
         rows = r.json().get("rows", []) or []
         locations.extend(rows)
@@ -189,9 +224,16 @@ def _normalize(s):
 
 def create_sublocation(name, parent_id):
     payload = {"name": name, "parent_id": parent_id}
-    r = requests.post(f"{SNIPE_URL}/api/v1/locations", json=payload, headers=HEADERS)
-    r.raise_for_status()
+    r = requests.post(
+        f"{SNIPE_URL}/api/v1/locations", json=payload, headers=HEADERS, timeout=TIMEOUT
+    )
+    try:
+        check(r)
+    except SnipeError as exc:
+        print(f"  ❌ Create failed: {name} — {exc}")
+        return False
     print(f"  ✅ Created: {name}")
+    return True
 
 
 def sync_units():
@@ -228,7 +270,7 @@ def sync_units():
         if parent_id:
             existing_subs.setdefault(parent_id, {})[loc["name"].strip().lower()] = loc["id"]
 
-    created = skipped = unmatched = 0
+    created = skipped = unmatched = failed = 0
 
     for prop_full, units in sorted(unit_map.items()):
         # Match property full name to a Property ID.
@@ -252,13 +294,16 @@ def sync_units():
         print(f"  {existing_count} existing, {len(new_units)} to create")
 
         for unit_name in new_units:
-            create_sublocation(unit_name, parent_snipeit_id)
-            created += 1
+            if create_sublocation(unit_name, parent_snipeit_id):
+                created += 1
+            else:
+                failed += 1
 
         skipped += existing_count
 
     print(f"\nUnit sync summary:")
     print(f"  Created:  {created}")
+    print(f"  Failed:   {failed}")
     print(f"  Skipped:  {skipped}")
     print(f"  Unmatched properties: {unmatched}")
 
@@ -274,6 +319,7 @@ def main():
     created = 0
     updated = 0
     skipped = 0
+    failed = 0
 
     with open("properties.csv", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
@@ -288,17 +334,23 @@ def main():
                 continue
 
             if prop_id not in existing_locations:
-                create_location(row)
-                created += 1
+                if create_location(row):
+                    created += 1
+                else:
+                    failed += 1
             else:
-                if update_location(existing_locations[prop_id], row):
+                result = update_location(existing_locations[prop_id], row)
+                if result is True:
                     updated += 1
+                elif result is None:
+                    failed += 1
                 else:
                     skipped += 1
 
     print("\nProperty sync summary:")
     print(f"  Created: {created}")
     print(f"  Updated: {updated}")
+    print(f"  Failed:  {failed}")
     print(f"  Skipped: {skipped}")
 
     sync_units()

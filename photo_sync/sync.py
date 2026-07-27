@@ -389,10 +389,15 @@ def _process_batch(
     if not resolved_photos:
         return results
 
-    # Decide target folder — subfolder when the event produced multiple photos.
-    # Keyed off the full batch, not the post-dedupe list, so a photo lands in
-    # the same folder whether or not its siblings were filtered out this run.
-    use_subfolder = batch_size > 1
+    # Every check-in / check-out gets its own subfolder, even when it produced
+    # a single photo, so a model folder contains event folders rather than a
+    # mix of folders and loose files. Photos from the asset image field or the
+    # top-level notes belong to no event and have nothing to name a folder
+    # after, so they stay flat unless there are several of them.
+    #
+    # The count comes from the full batch, not the post-dedupe list, so a photo
+    # lands in the same folder whether or not its siblings were filtered out.
+    use_subfolder = batch.source == "activity" or batch_size > 1
     if use_subfolder:
         subfolder = _event_subfolder_name(batch.action_type, batch.uploader, batch.date)
         target_folder = f"{base_folder}/{safe_name(subfolder)}"
@@ -594,7 +599,9 @@ def _process_native_uploads(
     # --- Phase 3: upload each group with subfolder logic ---
     for group_key, group_items in groups.items():
         matched_entry = entry_by_id.get(group_key) if group_key is not None else None
-        use_subfolder = len(group_items) > 1 and matched_entry is not None
+        # Same rule as URL batches: anything tied to an event gets that event's
+        # subfolder, regardless of how many photos came with it.
+        use_subfolder = matched_entry is not None
 
         if use_subfolder:
             action_type = matched_entry.get("action_type") or ""

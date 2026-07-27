@@ -106,6 +106,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     ap.add_argument("--apply", action="store_true",
                     help="Actually move the files (default reports only)")
+    ap.add_argument("--keep-redundant", action="store_true",
+                    help="Keep flat copies whose photo is already in an event "
+                         "subfolder (default removes them)")
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -257,8 +260,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Exception as exc:
             log.error("Failed to move %s: %s", f["path"], exc)
 
+    removed = 0
+    if already_filed and not args.keep_redundant:
+        for f, twin in already_filed:
+            if not twin["path"].startswith(f"{base}/"):
+                log.error("Skipping %s — twin outside base folder", f["name"])
+                continue
+            try:
+                drive.delete_item(f["id"])
+                removed += 1
+            except Exception as exc:
+                log.error("Failed to remove %s: %s", f["path"], exc)
+
     log.info("")
     log.info("Moved %d of %d file(s).", moved, len(moves))
+    if not args.keep_redundant:
+        log.info("Removed %d redundant copy(ies) — recoverable from the recycle bin.",
+                 removed)
     return 0
 
 

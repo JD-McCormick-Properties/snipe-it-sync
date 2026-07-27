@@ -869,8 +869,15 @@ def resolve_google_photos_album(
 
                 # Scroll to trigger lazy loading; pause between each scroll
                 # to give React/Vue time to mount new thumbnails.
+                # document.body can still be null here if the SPA is mid-load,
+                # and an exception out of evaluate() aborts the whole album —
+                # losing every photo in it for this run. Fall back to
+                # documentElement and skip the scroll rather than throwing.
                 for _ in range(6):
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    page.evaluate(
+                        "() => { const el = document.body || document.documentElement;"
+                        " if (el) window.scrollTo(0, el.scrollHeight); }"
+                    )
                     page.wait_for_timeout(2_000)
 
                 raw_urls = page.evaluate(extract_js) or []

@@ -1,0 +1,40 @@
+name: Cleanup Stutter Locations
+
+# Manual only. Lists redundant "X - X" sublocations by default; deleting
+# requires explicitly setting delete to "true".
+on:
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: 'Actually delete (leave "false" to just list them)'
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: property-sync
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - name: Run cleanup
+        env:
+          SNIPE_URL: ${{ secrets.SNIPE_URL }}
+          SNIPE_API_KEY: ${{ secrets.SNIPE_API_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.delete }}" = "true" ]; then
+            python cleanup_stutter_locations.py --delete
+          else
+            python cleanup_stutter_locations.py
+          fi

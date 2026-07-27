@@ -37,7 +37,8 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from helpers.image_utils import parse_dt, safe_name
+from helpers.dedupe import PERCEPTUAL_MAX_DISTANCE
+from helpers.image_utils import parse_dt, perceptual_hash, safe_name
 from helpers.onedrive import OneDriveClient
 from helpers.snipeit import SnipeITClient, summarize_asset
 from sync import (
@@ -179,11 +180,61 @@ def main(argv: Optional[List[str]] = None) -> int:
             moves.append((f, f"{folder}/{safe_name(sub)}"))
             log.info("    %-52s  -> %s", f["name"], safe_name(sub))
 
+    # Files stamped with a sync run time (from the old parse_dt bug) can't be
+    # matched by name. Check whether the same photo already sits in an event
+    # subfolder of the same model folder — the duplicate cleanup never
+    # compared across folder boundaries, so these were never examined.
+    already_filed: List[tuple] = []
+    if unmatched:
+        log.info("")
+        log.info("--- checking unmatched files against event subfolders " + "-" * 15)
+        nested_by_model: Dict[str, List[dict]] = defaultdict(list)
+        for f in files:
+            rel = f["path"][len(base):].strip("/")
+            parts = rel.split("/")
+            if len(parts) > 3:
+                nested_by_model["/".join([base] + parts[:2])].append(f)
+
+        cache: Dict[str, Optional[str]] = {}
+
+        def ph(item: dict) -> Optional[str]:
+            if item["id"] not in cache:
+                data = drive.download_item(item["id"])
+                cache[item["id"]] = perceptual_hash(data) if data else None
+            return cache[item["id"]]
+
+        still_orphan: List[dict] = []
+        for f in unmatched:
+            model_folder = f["path"].rsplit("/", 1)[0]
+            mine = ph(f)
+            if not mine:
+                still_orphan.append(f)
+                continue
+            target = int(mine, 16)
+            hit = None
+            for cand in nested_by_model.get(model_folder, []):
+                other = ph(cand)
+                if not other:
+                    continue
+                if bin(target ^ int(other, 16)).count("1") <= PERCEPTUAL_MAX_DISTANCE:
+                    hit = cand
+                    break
+            if hit:
+                already_filed.append((f, hit))
+                log.info("    %-52s  already in %s",
+                         f["name"], hit["path"].rsplit("/", 2)[-2])
+            else:
+                still_orphan.append(f)
+                log.info("    %-52s  not found in any event folder", f["name"])
+        unmatched = still_orphan
+
     log.info("")
     log.info("=" * 70)
     log.info("%d file(s) can be filed into an event subfolder", len(moves))
+    log.info("%d file(s) are already filed in an event subfolder (redundant copy)",
+             len(already_filed))
     log.info("%d file(s) have no event (asset image / notes) — leaving in place", len(no_event))
-    log.info("%d file(s) matched no activity entry — leaving in place", len(unmatched))
+    log.info("%d file(s) matched nothing at all — leaving in place", len(unmatched))
 
     if not args.apply:
         log.info("")

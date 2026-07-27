@@ -1,13 +1,40 @@
 # Snipe-IT → OneDrive Photo Sync
 
-Pulls every hardware asset from Snipe-IT, scans the **notes** field for
-photo links (Google Photos shares, iCloud shares, direct image URLs),
-downloads each image, and uploads it to OneDrive under
-`{ONEDRIVE_BASE_FOLDER}/{asset_tag}/`.
+Pulls every hardware asset from Snipe-IT and collects its photos from two
+places: links pasted into the **notes** field or a check-in/check-out note
+(Google Photos shares, direct image URLs), and files attached to the asset
+through SnipeMobile, which uploads check-in/check-out photos to
+`/api/v1/hardware/{id}/files`.
 
-A small SQLite file tracks what's already been uploaded so the next run
-is mostly no-ops. Optionally, the resulting OneDrive links can be written
-back into the asset's notes.
+Photos are filed in OneDrive by category, model, and event:
+
+```
+{ONEDRIVE_BASE_FOLDER}/
+└── Vehicle/
+    └── Chevrolet Silverado 2007/
+        ├── Check Out - Nick Brown - 2026-07-17 09-01/
+        │   ├── Chevrolet Silverado 2007 - 1.jpg
+        │   └── Chevrolet Silverado 2007 - 2.jpg
+        └── Check In - Nick Brown - 2026-07-18 16-30/
+            └── Chevrolet Silverado 2007 - 1.jpg
+```
+
+Every check-in and check-out gets its own subfolder, even when it produced a
+single photo. Native SnipeMobile attachments are matched to their event by
+timestamp so they land in the same folder as any linked photos from that
+event. Photos that belong to no event — the asset image field, or the
+top-level notes — stay directly in the model folder.
+
+A small SQLite file tracks what's already been uploaded so the next run is
+mostly no-ops. Deduplication is by content, not by URL: sources re-serve the
+same photo with slightly different bytes, so each image is also fingerprinted
+with a perceptual hash and matched within a small Hamming distance.
+Optionally, the resulting OneDrive links can be written back into the asset's
+notes.
+
+iCloud share links cannot be resolved — Apple blocks automated export. They
+are counted and listed at INFO, then skipped. Attach photos through
+SnipeMobile instead.
 
 This subproject lives next to the existing AppFolio location sync
 (`sync_properties.py`) and reuses the same repo for CI.
@@ -17,7 +44,10 @@ This subproject lives next to the existing AppFolio location sync
 ```
 photo_sync/
 ├── sync.py                 # entry point
+├── cleanup_orphans.py      # maintenance: remove redundant uploads
+├── organize_photos.py      # maintenance: file loose photos into event folders
 ├── requirements.txt
+├── requirements-dev.txt    # requirements.txt + pytest
 ├── .env.example            # copy to .env and fill in
 ├── README.md               # (this file)
 ├── helpers/
@@ -25,7 +55,8 @@ photo_sync/
 │   ├── onedrive.py         # Microsoft Graph (client credentials) uploader
 │   ├── link_resolver.py    # URL extraction + image resolution
 │   ├── image_utils.py      # HEIC→JPG, hashing, filename normalization
-│   └── dedupe.py           # SQLite store of already-uploaded URLs
+│   └── dedupe.py           # SQLite store of already-uploaded photos
+├── tests/                  # offline; no credentials or network needed
 └── (state)
     └── photo_sync_state.db # created on first run
 ```
@@ -137,8 +168,20 @@ checks:
 2. After resolving and normalizing image bytes, has this `content_hash`
    already been uploaded for this asset? → skip (catches the same image
    shared under two different URLs)
+3. Does an existing `perceptual_hash` for this asset sit within
+   `PERCEPTUAL_MAX_DISTANCE` bits? → skip
 
-`--force` bypasses both checks.
+Step 3 is what makes the sync settle. Google Photos rotates its CDN URLs on
+every scrape, so step 1 never fires for them, and it re-serves the same photo
+with slightly different bytes, so step 2 misses too — measured drift shifts a
+256-bit perceptual hash by about 5 bits, while genuinely different photos sit
+50+ bits apart. Without step 3 every album re-uploaded on every run.
+
+A photo skipped at step 2 has its perceptual hash backfilled onto the
+existing row, so rows written before the column existed become protected
+after one pass rather than re-uploading once each.
+
+`--force` bypasses all three checks.
 
 The DB is cached between GitHub Actions runs (see workflow). For a clean
 slate, delete the file or pass `--force`.
@@ -146,22 +189,51 @@ slate, delete the file or pass `--force`.
 ## Shared link resolution
 
 `helpers/link_resolver.py` is the most failure-prone component because
-Google Photos and iCloud shape their share pages aggressively. The
-current strategy is HTTP-only:
+Google Photos shapes its share pages aggressively.
+
+Plain URLs are resolved over HTTP:
 
 1. `GET` the URL with a real-browser User-Agent and follow redirects.
 2. If the response is `image/*`, we have the image — return its bytes.
 3. Otherwise parse the HTML and look for, in order:
    `og:image:secure_url`, `og:image`, `twitter:image`,
    `itemprop=image`, `<link rel="image_src">`, then any `<img src>`.
-4. For Google Photos hosts (`googleusercontent.com`, `ggpht.com`),
-   strip the `=w...-h...` size suffix and replace with `=s0` to fetch
-   the original-resolution variant.
 
-If a specific link type repeatedly fails, the easiest next step is to
-add Playwright as a fallback: render the share page in a real browser,
-wait for the `<img>` to appear, and pass its `src` back into the same
-`_read_capped` flow.
+Google Photos links go through `resolve_google_photos_album`, which renders
+the page in headless Chromium (Playwright), because the album grid is built
+by JavaScript and the thumbnails are CSS `background-image` rather than
+`<img>`. It polls until the grid appears, then scrolls to trigger lazy
+loading, stopping once the image count stops growing — a fixed wait made
+every album cost the same 20 seconds regardless of size. Set
+`USE_PLAYWRIGHT=false` to skip these entirely.
+
+Every scraped Google CDN URL (`googleusercontent.com`, `ggpht.com`) is
+rewritten to `=s0` for the original-resolution variant, whether or not it
+arrived with a size suffix. This matters: the grid is scraped mid-render, so
+the same photo can appear with or without a suffix depending on timing, and
+an un-suffixed URL serves a ~90 KB thumbnail.
+
+iCloud links are detected and skipped. Apple blocks headless browsers and the
+newer `icloudlinks/…` format isn't reachable through the legacy sharedstreams
+API either. Attach photos through SnipeMobile instead.
+
+## Tests
+
+```
+pip install -r requirements-dev.txt
+python -m pytest tests/ -v
+```
+
+Every test is offline — no credentials, no network, no Playwright browsers —
+so the suite runs in seconds and on every push via `.github/workflows/tests.yml`.
+
+Coverage is deliberately anchored to bugs that reached production: perceptual
+hash stability across re-encoding, Hamming matching rather than equality,
+forcing `=s0` on every Google CDN URL shape, preferring the machine-readable
+`datetime` field over `formatted`, batch position staying stable as dedupe
+filters siblings out, subfolder filenames not overwriting existing files, and
+the dedupe schema migration preserving rows. A failure there means a fixed bug
+has come back.
 
 ## Production notes
 

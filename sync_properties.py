@@ -41,29 +41,13 @@ def check(resp):
 # -------------------------------
 # Get ALL locations (pagination)
 # -------------------------------
-def get_all_locations():
+def get_all_locations(all_locs=None):
+    """Map Property ID (stored in a location's notes) -> location object."""
     locations = {}
-    offset = 0
-    limit = 50
-
-    while True:
-        url = f"{SNIPE_URL}/api/v1/locations?limit={limit}&offset={offset}"
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        r.raise_for_status()
-
-        data = r.json()
-        rows = data.get("rows", [])
-
-        for loc in rows:
-            prop_id = (loc.get("notes") or "").strip()
-            if prop_id:
-                locations[prop_id] = loc
-
-        if len(rows) < limit:
-            break
-
-        offset += limit
-
+    for loc in all_locs if all_locs is not None else get_all_locations_raw():
+        prop_id = (loc.get("notes") or "").strip()
+        if prop_id:
+            locations[prop_id] = loc
     return locations
 
 
@@ -239,7 +223,7 @@ def create_sublocation(name, parent_id):
     return True
 
 
-def sync_units():
+def sync_units(all_locs=None):
     """Create Snipe-IT sublocations for every unit under each property."""
     print("\n--- Unit sync ---")
 
@@ -253,10 +237,9 @@ def sync_units():
     # Build a normalized version of prop_id_map for fuzzy matching.
     norm_prop_id_map = {_normalize(k): v for k, v in prop_id_map.items()}
 
-    # Fetch all Snipe-IT locations once.
-    print("Fetching all Snipe-IT locations...")
-    all_locs = get_all_locations_raw()
-    print(f"Found {len(all_locs)} total locations\n")
+    if all_locs is None:
+        all_locs = get_all_locations_raw()
+    print(f"{len(all_locs)} total locations\n")
 
     # property_id string (from notes) -> Snipe-IT numeric location id
     snipeit_id_by_prop = {}
@@ -336,9 +319,10 @@ def sync_units():
 # Main sync logic
 # -------------------------------
 def main():
-    print("Fetching existing locations...")
-    existing_locations = get_all_locations()
-    print(f"Found {len(existing_locations)} existing locations\n")
+    print("Fetching all Snipe-IT locations...")
+    all_locs = get_all_locations_raw()
+    existing_locations = get_all_locations(all_locs)
+    print(f"Found {len(all_locs)} locations, {len(existing_locations)} with a Property ID\n")
 
     created = 0
     updated = 0
@@ -377,7 +361,7 @@ def main():
     print(f"  Failed:  {failed}")
     print(f"  Skipped: {skipped}")
 
-    sync_units()
+    sync_units(all_locs)
 
 
 if __name__ == "__main__":

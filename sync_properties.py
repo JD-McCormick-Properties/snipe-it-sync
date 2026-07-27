@@ -1,6 +1,8 @@
 import csv
 import html
 import os
+import time
+
 import requests
 
 SNIPE_URL = os.environ["SNIPE_URL"].strip().rstrip("/")
@@ -20,6 +22,26 @@ TIMEOUT = 30
 
 class SnipeError(RuntimeError):
     """A write Snipe-IT rejected."""
+
+
+def get_json(path, **params):
+    """GET with backoff. The instance intermittently refuses connections."""
+    last = None
+    for attempt in range(4):
+        try:
+            r = requests.get(
+                f"{SNIPE_URL}{path}", headers=HEADERS, params=params, timeout=TIMEOUT
+            )
+            if r.status_code in (429, 500, 502, 503, 504):
+                last = f"HTTP {r.status_code}"
+                time.sleep(2 ** attempt)
+                continue
+            r.raise_for_status()
+            return r.json()
+        except requests.RequestException as exc:
+            last = str(exc)[:120]
+            time.sleep(2 ** attempt)
+    raise RuntimeError(f"GET {path} failed after 4 attempts: {last}")
 
 
 def check(resp):
@@ -156,10 +178,10 @@ def get_all_locations_raw():
     offset = 0
     limit = 500
     while True:
-        url = f"{SNIPE_URL}/api/v1/locations?limit={limit}&offset={offset}"
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        r.raise_for_status()
-        rows = r.json().get("rows", []) or []
+        rows = get_json(
+            "/api/v1/locations",
+            limit=limit, offset=offset, sort="id", order="asc",
+        ).get("rows", []) or []
         locations.extend(rows)
         if len(rows) < limit:
             break

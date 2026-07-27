@@ -1,4 +1,5 @@
 import csv
+import html
 import os
 import requests
 
@@ -117,22 +118,24 @@ def update_location(existing, row):
     address = build_address(row)
     zip_code = (row.get("Property Zip") or "").strip()
 
-    needs_update = False
+    # Snipe-IT HTML-escapes text on the way out, so "402 & 404 Genesee Street"
+    # comes back as "402 &amp; 404 ..." and an apostrophe as &#039;. Comparing
+    # raw made any property containing & or ' look permanently out of date, so
+    # it was rewritten on every run.
+    differing = [
+        field
+        for field, want in (
+            ("name", name), ("city", city), ("state", state),
+            ("address", address), ("zip", zip_code),
+        )
+        if html.unescape((existing.get(field) or "").strip()) != want
+    ]
 
-    if existing.get("name") != name:
-        needs_update = True
-    if existing.get("city") != city:
-        needs_update = True
-    if existing.get("state") != state:
-        needs_update = True
-    if existing.get("address") != address:
-        needs_update = True
-    if existing.get("zip") != zip_code:
-        needs_update = True
-
-    if not needs_update:
+    if not differing:
         print(f"⏭️ No change: {name}")
         return False
+
+    print(f"   {name}: differs on {', '.join(differing)}")
 
     payload = {
         "name": name,
@@ -268,9 +271,16 @@ def sync_units():
         parent = loc.get("parent") or {}
         parent_id = parent.get("id") if isinstance(parent, dict) else None
         if parent_id:
-            existing_subs.setdefault(parent_id, {})[loc["name"].strip().lower()] = loc["id"]
+            key = html.unescape(loc["name"]).strip().lower()
+            existing_subs.setdefault(parent_id, {})[key] = loc["id"]
 
-    created = skipped = unmatched = failed = 0
+    # Snipe-IT enforces globally unique location names, so a unit name already
+    # used anywhere — including as a top-level property — can never be created
+    # under another parent. Checking only within the parent meant 15 names were
+    # retried and rejected on every run.
+    all_names = {html.unescape(loc["name"]).strip().lower() for loc in all_locs}
+
+    created = skipped = unmatched = failed = blocked = 0
 
     for prop_full, units in sorted(unit_map.items()):
         # Match property full name to a Property ID.
@@ -287,11 +297,24 @@ def sync_units():
             continue
 
         prop_subs = existing_subs.get(parent_snipeit_id, {})
-        new_units = [u for u in units if u.lower() not in prop_subs]
-        existing_count = len(units) - len(new_units)
+        new_units = []
+        taken_elsewhere = []
+        for u in units:
+            key = u.strip().lower()
+            if key in prop_subs:
+                continue
+            if key in all_names:
+                taken_elsewhere.append(u)
+            else:
+                new_units.append(u)
+        existing_count = len(units) - len(new_units) - len(taken_elsewhere)
 
         print(f"{prop_full}")
-        print(f"  {existing_count} existing, {len(new_units)} to create")
+        note = f", {len(taken_elsewhere)} name already used elsewhere" if taken_elsewhere else ""
+        print(f"  {existing_count} existing, {len(new_units)} to create{note}")
+        for u in taken_elsewhere:
+            print(f"  ⚠️  cannot create {u!r} — Snipe-IT location names must be globally unique")
+        blocked += len(taken_elsewhere)
 
         for unit_name in new_units:
             if create_sublocation(unit_name, parent_snipeit_id):
@@ -304,6 +327,7 @@ def sync_units():
     print(f"\nUnit sync summary:")
     print(f"  Created:  {created}")
     print(f"  Failed:   {failed}")
+    print(f"  Blocked (name taken elsewhere): {blocked}")
     print(f"  Skipped:  {skipped}")
     print(f"  Unmatched properties: {unmatched}")
 

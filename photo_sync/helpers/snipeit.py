@@ -117,9 +117,6 @@ class SnipeITClient:
             if len(rows) < page_size:
                 break
 
-    def get_asset(self, asset_id: int) -> Dict[str, Any]:
-        return self._request("GET", f"/api/v1/hardware/{asset_id}")
-
     def get_asset_uploads(self, asset_id: int) -> List[Dict[str, Any]]:
         """Return file attachments for an asset via GET /hardware/{id}/files."""
         data = self._request(

@@ -213,9 +213,10 @@ arrived with a size suffix. This matters: the grid is scraped mid-render, so
 the same photo can appear with or without a suffix depending on timing, and
 an un-suffixed URL serves a ~90 KB thumbnail.
 
-iCloud links are detected and skipped. Apple blocks headless browsers and the
-newer `icloudlinks/…` format isn't reachable through the legacy sharedstreams
-API either. Attach photos through SnipeMobile instead.
+iCloud links are detected by `is_icloud_share()` and skipped before any
+network work. Apple blocks headless browsers, and a direct sharedstreams API
+client was tried and removed — it couldn't reach the newer `icloudlinks/…`
+share format. Attach photos through SnipeMobile instead.
 
 ## Tests
 
@@ -272,6 +273,8 @@ manual trigger exposes a `force` input that maps to `FORCE_RESYNC`.
 
 - OCR serial-number detection on uploaded images (Tesseract + Pillow)
 - QR code reading for asset re-tagging
-- Re-upload as a Snipe-IT attachment (in addition to OneDrive)
 - Discord/Slack notification on run summary
-- Per-category folder layout (`AssetPhotos/Laptops/AT-001/...`)
+
+Already shipped, previously listed here: per-category folder layout, and
+Snipe-IT attachments — SnipeMobile now uploads check-in/check-out photos as
+asset files and this sync mirrors them to OneDrive.

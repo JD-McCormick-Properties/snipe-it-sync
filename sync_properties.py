@@ -296,6 +296,13 @@ def sync_units(all_locs=None):
         existing_count = 0
         for u in units:
             bare = u.strip()
+            # A single-unit property lists the property itself as its only
+            # unit, so the name collides with its own parent. Qualifying that
+            # yields "Skyline Drive - Skyline Drive"; the parent location
+            # already represents it, so there is nothing to add.
+            if parent_name and bare.lower() == parent_name.lower():
+                existing_count += 1
+                continue
             qualified = f"{parent_name} - {bare}" if parent_name else bare
             if bare.lower() in prop_subs or qualified.lower() in prop_subs:
                 existing_count += 1

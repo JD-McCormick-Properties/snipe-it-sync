@@ -36,7 +36,8 @@ def all_locations():
     out, offset, limit = [], 0, 500
     while True:
         r = requests.get(
-            f"{SNIPE_URL}/api/v1/locations?limit={limit}&offset={offset}",
+            f"{SNIPE_URL}/api/v1/locations",
+            params={"limit": limit, "offset": offset, "sort": "id", "order": "asc"},
             headers=HEADERS,
             timeout=TIMEOUT,
         )

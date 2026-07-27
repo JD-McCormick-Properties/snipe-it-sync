@@ -95,7 +95,13 @@ class SnipeITClient:
             data = self._request(
                 "GET",
                 "/api/v1/hardware",
-                params={"limit": page_size, "offset": offset},
+                # Without a stable sort, offset paging can return a record
+                # twice and skip another as the default ordering shifts
+                # between requests — an asset would be silently missed.
+                params={
+                    "limit": page_size, "offset": offset,
+                    "sort": "id", "order": "asc",
+                },
             )
             rows: List[Dict[str, Any]] = data.get("rows", []) or []
             if total is None:
@@ -189,6 +195,8 @@ class SnipeITClient:
                     "item_id": asset_id,
                     "limit": page_size,
                     "offset": offset,
+                    "sort": "id",
+                    "order": "asc",
                 },
             )
             rows: List[Dict[str, Any]] = data.get("rows", []) or []

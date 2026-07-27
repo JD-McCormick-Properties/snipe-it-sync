@@ -1,0 +1,57 @@
+name: Organize Loose Photos
+
+# Manual only. Reports which loose model-folder photos belong in an event
+# subfolder; moving requires explicitly setting apply to "true".
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Actually move the files (leave "false" to just list them)'
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+# Shares the sync's group so a move can't run while a sync is uploading.
+concurrency:
+  group: photo-sync
+  cancel-in-progress: false
+
+jobs:
+  organize:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        working-directory: photo_sync
+        run: pip install -r requirements.txt
+
+      - name: Run organizer
+        working-directory: photo_sync
+        env:
+          SNIPE_URL: ${{ secrets.SNIPE_URL }}
+          SNIPE_API_KEY: ${{ secrets.SNIPE_API_KEY }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
+          ONEDRIVE_DRIVE_ID: ${{ secrets.ONEDRIVE_DRIVE_ID }}
+          ONEDRIVE_BASE_FOLDER: ${{ vars.ONEDRIVE_BASE_FOLDER || 'AssetPhotos' }}
+          LOG_LEVEL: INFO
+        run: |
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then
+            python organize_photos.py --apply
+          else
+            python organize_photos.py
+          fi

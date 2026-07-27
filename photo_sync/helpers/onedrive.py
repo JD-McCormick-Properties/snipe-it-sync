@@ -197,6 +197,21 @@ class OneDriveClient:
 
         return found
 
+    def move_item(
+        self, item_id: str, new_parent_id: str, new_name: Optional[str] = None
+    ) -> None:
+        """Reparent a drive item, optionally renaming it in the same call."""
+        body: Dict[str, Any] = {"parentReference": {"id": new_parent_id}}
+        if new_name:
+            body["name"] = new_name
+        r = requests.patch(
+            f"{self._items_root()}/{item_id}",
+            headers=self._headers("application/json"),
+            json=body,
+            timeout=self.timeout,
+        )
+        r.raise_for_status()
+
     def download_item(self, item_id: str) -> Optional[bytes]:
         """Fetch the bytes of a drive item by id. None if it can't be read."""
         try:

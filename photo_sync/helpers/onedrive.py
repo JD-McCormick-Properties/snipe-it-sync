@@ -5,9 +5,11 @@ a target user (ONEDRIVE_USER_ID — usually a UPN like svc-asset@yourco.com)
 or a drive id directly (ONEDRIVE_DRIVE_ID). User-id form is more common.
 
 Files are placed at:
-    {ONEDRIVE_BASE_FOLDER}/{asset_tag}/{filename}
+    {ONEDRIVE_BASE_FOLDER}/{category}/{model}/{event}/{filename}
 
-The base folder defaults to "AssetPhotos".
+where {event} names the check-in or check-out the photo belongs to (see
+asset_folder() for the first three segments). The base folder defaults to
+"AssetPhotos".
 """
 
 from __future__ import annotations

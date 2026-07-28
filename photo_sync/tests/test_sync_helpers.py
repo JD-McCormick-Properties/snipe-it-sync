@@ -9,10 +9,12 @@ from conftest import activity
 
 from sync import (
     ACTIVITY_MATCH_WINDOW,
+    UNMATCHED_UPLOAD_FOLDER,
     _action_label,
     _event_subfolder_name,
     _extract_entry_date,
     _extract_uploader_name,
+    _native_upload_folder,
     _nearest_activity_entry,
     _subfolder_filename,
 )
@@ -194,3 +196,38 @@ def _use_subfolder(source: str, batch_size: int) -> bool:
 )
 def test_every_event_gets_a_subfolder(source, size, expected):
     assert _use_subfolder(source, size) is expected
+
+
+# --------------------------------------------------------------------- #
+# Native upload destinations
+#
+# SnipeMobile 1.2.0 added a Files tab, so a photo can be attached without any
+# check-in or check-out. Those have no event to name a folder after and used
+# to land loose in the model folder alongside the event folders.
+# --------------------------------------------------------------------- #
+BASE = "AssetPhotos/Vehicle/Chevrolet Silverado 2025"
+
+
+def test_upload_tied_to_a_checkout_goes_to_that_event_folder():
+    assert _native_upload_folder(BASE, activity(1, action="checkout")) == (
+        f"{BASE}/Check Out - Nick Brown - 2026-07-17 09-01"
+    )
+
+
+def test_upload_tied_to_a_checkin_goes_to_that_event_folder():
+    assert _native_upload_folder(BASE, activity(1, action="checkin from")) == (
+        f"{BASE}/Check In - Nick Brown - 2026-07-17 09-01"
+    )
+
+
+def test_upload_with_no_event_goes_to_the_file_upload_folder():
+    assert _native_upload_folder(BASE, None) == f"{BASE}/{UNMATCHED_UPLOAD_FOLDER}"
+
+
+def test_unmatched_upload_never_lands_loose_in_the_model_folder():
+    """The regression: it used to return the model folder itself."""
+    assert _native_upload_folder(BASE, None) != BASE
+
+
+def test_file_upload_folder_is_shared_across_unmatched_uploads():
+    assert _native_upload_folder(BASE, None) == _native_upload_folder(BASE, None)

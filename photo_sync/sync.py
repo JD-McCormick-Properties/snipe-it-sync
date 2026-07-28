@@ -1,10 +1,15 @@
 """Snipe-IT photo sync entry point.
 
-Reads asset notes from Snipe-IT, extracts URLs, resolves each to image
-bytes (Google Photos / iCloud / direct), uploads them to OneDrive under
-{ONEDRIVE_BASE_FOLDER}/{asset_tag}/, dedupes by (asset, url) and content
-hash, and (optionally) writes the OneDrive web URLs back into the notes
-field.
+Collects each hardware asset's photos from two places: links in the notes
+field or a check-in/check-out note (Google Photos shares and direct image
+URLs — iCloud links are detected and skipped), and files attached to the
+asset through SnipeMobile.
+
+Uploads land in OneDrive under
+{ONEDRIVE_BASE_FOLDER}/{category}/{model}/{event}/, where {event} is the
+check-in or check-out the photo belongs to, or "File Upload" for an
+attachment with no event. Deduplication is by content rather than URL, since
+sources re-serve the same photo with slightly different bytes.
 
 Run:
     python -m photo_sync.sync           # from the repo root

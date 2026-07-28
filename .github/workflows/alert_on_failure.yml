@@ -16,6 +16,9 @@ on:
       - "Photo Sync (Snipe-IT → OneDrive)"
       - "AC Unit Checkout Notifier"
     types: [completed]
+  # Manual trigger so the mail path can be exercised without deliberately
+  # breaking a sync. Sends a clearly-labelled test to ALERT_TO_EMAILS.
+  workflow_dispatch:
 
 jobs:
   alert:
@@ -42,9 +45,9 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           NOTIFY_FROM_EMAIL: ${{ vars.NOTIFY_FROM_EMAIL }}
           ALERT_TO_EMAILS: ${{ vars.ALERT_TO_EMAILS }}
-          ALERT_WORKFLOW: ${{ github.event.workflow_run.name }}
-          ALERT_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          ALERT_RUN_URL: ${{ github.event.workflow_run.html_url }}
-          ALERT_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          ALERT_WORKFLOW: ${{ github.event.workflow_run.name || 'Manual alert test' }}
+          ALERT_CONCLUSION: ${{ github.event.workflow_run.conclusion || 'test' }}
+          ALERT_RUN_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
+          ALERT_RUN_NUMBER: ${{ github.event.workflow_run.run_number || github.run_number }}
           ALERT_REPO: ${{ github.repository }}
         run: python alert.py

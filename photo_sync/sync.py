@@ -185,6 +185,10 @@ def _event_subfolder_name(action_type: str, uploader: str, date: str) -> str:
 # to be considered the same event.
 ACTIVITY_MATCH_WINDOW = timedelta(minutes=1)
 
+# Where a native upload goes when no check-in or check-out is near enough to
+# claim it — typically attached through SnipeMobile's Files tab.
+UNMATCHED_UPLOAD_FOLDER = "File Upload"
+
 
 def _nearest_activity_entry(
     upload_dt: datetime, activity_entries: List[Dict]
@@ -262,6 +266,24 @@ def _collect_url_batches(
                 all_seen.update(entry_urls)
 
     return batches
+
+
+def _native_upload_folder(base_folder: str, matched_entry: Optional[Dict]) -> str:
+    """Destination for a group of native uploads under a model folder.
+
+    Uploads tied to a check-in or check-out go to that event's folder. One
+    attached through SnipeMobile's Files tab has no event to name a folder
+    after, so it goes to a shared folder rather than loose in the model
+    folder, keeping the model folder to event folders only.
+    """
+    if matched_entry is None:
+        return f"{base_folder}/{UNMATCHED_UPLOAD_FOLDER}"
+    subfolder = _event_subfolder_name(
+        matched_entry.get("action_type") or "",
+        _extract_uploader_name(matched_entry),
+        _extract_entry_date(matched_entry),
+    )
+    return f"{base_folder}/{safe_name(subfolder)}"
 
 
 def _subfolder_filename(
@@ -606,17 +628,15 @@ def _process_native_uploads(
         # subfolder, regardless of how many photos came with it.
         use_subfolder = matched_entry is not None
 
+        target_folder = _native_upload_folder(base_folder, matched_entry)
+        drive.ensure_folder(target_folder)
         if use_subfolder:
-            action_type = matched_entry.get("action_type") or ""
-            uploader = _extract_uploader_name(matched_entry)
-            event_date = _extract_entry_date(matched_entry)
-            subfolder = _event_subfolder_name(action_type, uploader, event_date)
-            target_folder = f"{base_folder}/{safe_name(subfolder)}"
-            drive.ensure_folder(target_folder)
-            log.info("  Native uploads → event subfolder: %s", subfolder)
+            log.info("  Native uploads → %s", target_folder.rsplit("/", 1)[-1])
         else:
-            target_folder = base_folder
-            drive.ensure_folder(target_folder)
+            log.info(
+                "  %d upload(s) with no matching check-in/check-out → %s",
+                len(group_items), UNMATCHED_UPLOAD_FOLDER,
+            )
 
         for idx, item in enumerate(group_items, start=1):
             dedupe_key = item["dedupe_key"]

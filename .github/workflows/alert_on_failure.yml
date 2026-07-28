@@ -22,8 +22,12 @@ on:
 
 jobs:
   alert:
-    # Covers failure, cancelled, and timed_out alike.
-    if: github.event.workflow_run.conclusion != 'success'
+    # Covers failure, cancelled and timed_out alike. A manual run has no
+    # workflow_run context, so it is allowed through explicitly rather than
+    # relying on the empty comparison happening to be true.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion != 'success'
     runs-on: ubuntu-latest
 
     steps:

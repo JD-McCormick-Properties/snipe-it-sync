@@ -344,6 +344,44 @@ def build_email(
 
 
 # ------------------------------------------------------------------ #
+# Checkout processing
+# ------------------------------------------------------------------ #
+def process_checkouts(checkouts, ac_asset_ids, state, send) -> tuple:
+    """Notify on unseen checkouts of watched assets. Returns (sent, failed).
+
+    ``send(entry, asset_id)`` performs the notification and raises on failure.
+
+    An entry is recorded as seen only once its notification has gone out, so a
+    transient Graph or Snipe-IT failure retries on the next run rather than
+    being dropped silently. Entries for assets we don't watch are recorded
+    immediately since there is nothing to send.
+    """
+    sent = failed = 0
+    for entry in checkouts:
+        entry_id = entry.get("id")
+        if not entry_id or entry_id in state.seen_ids:
+            continue
+
+        item = entry.get("item") or {}
+        asset_id = item.get("id")
+
+        if asset_id not in ac_asset_ids:
+            state.seen_ids.add(entry_id)
+            continue
+
+        try:
+            send(entry, asset_id)
+        except Exception:
+            failed += 1
+            log.exception("Failed to notify for asset_id=%s — will retry", asset_id)
+            continue
+
+        state.seen_ids.add(entry_id)
+        sent += 1
+    return sent, failed
+
+
+# ------------------------------------------------------------------ #
 # Main
 # ------------------------------------------------------------------ #
 def main() -> int:
@@ -382,37 +420,16 @@ def main() -> int:
         )
         return 0
 
-    notified = failed = 0
+    def send(entry, asset_id):
+        log.info("New AC unit checkout — asset_id=%s entry_id=%s", asset_id, entry.get("id"))
+        asset = snipe.get_asset(asset_id)
+        history = snipe.get_asset_history(asset_id)
+        subject, body = build_email(asset, entry, history, cfg.snipe_url)
+        mailer.send(cfg.notify_to, subject, body)
+        log.info("Notified %s — asset %s", cfg.notify_to, asset.get("asset_tag"))
+
     try:
-        for entry in checkouts:
-            entry_id = entry.get("id")
-            if not entry_id or entry_id in state.seen_ids:
-                continue
-
-            item = entry.get("item") or {}
-            asset_id = item.get("id")
-
-            if asset_id not in ac_asset_ids:
-                # Nothing to send, so recording it just saves work next run.
-                state.seen_ids.add(entry_id)
-                continue
-
-            log.info("New AC unit checkout — asset_id=%d entry_id=%d", asset_id, entry_id)
-            try:
-                asset = snipe.get_asset(asset_id)
-                history = snipe.get_asset_history(asset_id)
-                subject, html = build_email(asset, entry, history, cfg.snipe_url)
-                mailer.send(cfg.notify_to, subject, html)
-            except Exception:
-                # Leave it unseen so the next run retries rather than dropping
-                # the notification silently.
-                failed += 1
-                log.exception("Failed to notify for asset_id=%s — will retry", asset_id)
-                continue
-
-            state.seen_ids.add(entry_id)
-            notified += 1
-            log.info("Notified %s — asset %s", cfg.notify_to, asset.get("asset_tag"))
+        notified, failed = process_checkouts(checkouts, ac_asset_ids, state, send)
     finally:
         # Persist regardless, so sends that already went out are never repeated.
         state.save(cfg.state_path)

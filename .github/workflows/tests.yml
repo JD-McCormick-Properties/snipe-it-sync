@@ -5,10 +5,16 @@ on:
     branches: [main]
     paths:
       - "photo_sync/**"
+      - "notifications/**"
+      - "sync_properties.py"
+      - "tests/**"
       - ".github/workflows/tests.yml"
   pull_request:
     paths:
       - "photo_sync/**"
+      - "notifications/**"
+      - "sync_properties.py"
+      - "tests/**"
       - ".github/workflows/tests.yml"
   workflow_dispatch:
 
@@ -29,9 +35,15 @@ jobs:
       # No Playwright browsers and no credentials: every test is pure and
       # offline, so this stays a fast check on each push.
       - name: Install dependencies
-        working-directory: photo_sync
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip install -r photo_sync/requirements-dev.txt
+          pip install -r notifications/requirements.txt
 
-      - name: Run tests
+      - name: Photo sync tests
         working-directory: photo_sync
+        run: python -m pytest tests/ -v
+
+      # Property sync and notifier. Placeholder credentials only — nothing
+      # here makes a network call.
+      - name: Property sync and notifier tests
         run: python -m pytest tests/ -v

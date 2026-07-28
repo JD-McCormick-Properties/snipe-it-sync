@@ -15,15 +15,21 @@ Photos are filed in OneDrive by category, model, and event:
         ├── Check Out - Nick Brown - 2026-07-17 09-01/
         │   ├── Chevrolet Silverado 2007 - 1.jpg
         │   └── Chevrolet Silverado 2007 - 2.jpg
-        └── Check In - Nick Brown - 2026-07-18 16-30/
-            └── Chevrolet Silverado 2007 - 1.jpg
+        ├── Check In - Nick Brown - 2026-07-18 16-30/
+        │   └── Chevrolet Silverado 2007 - 1.jpg
+        └── File Upload/
+            └── Chevrolet Silverado 2007 - 2026-07-28 14-30-00.jpg
 ```
 
 Every check-in and check-out gets its own subfolder, even when it produced a
 single photo. Native SnipeMobile attachments are matched to their event by
 timestamp so they land in the same folder as any linked photos from that
-event. Photos that belong to no event — the asset image field, or the
-top-level notes — stay directly in the model folder.
+event.
+
+`File Upload/` holds attachments with no event to match — typically added
+through SnipeMobile's Files tab rather than during a check-in or check-out.
+Photos from the asset image field or the top-level notes belong to no event
+either and stay directly in the model folder.
 
 A small SQLite file tracks what's already been uploaded so the next run is
 mostly no-ops. Deduplication is by content, not by URL: sources re-serve the

@@ -48,3 +48,52 @@ def test_no_recipients_configured_is_a_skip_not_an_error(monkeypatch, caplog):
 def test_blank_recipient_entries_are_ignored(monkeypatch):
     monkeypatch.setenv("ALERT_TO_EMAILS", " , ,  ")
     assert main() == 0
+
+
+def test_alert_never_falls_back_to_the_notifier_recipients(monkeypatch):
+    """Sync failures must not reach the people who get AC unit checkouts.
+
+    NOTIFY_TO_EMAILS is set here and ALERT_TO_EMAILS is not; the alert must
+    skip rather than borrow the notifier's recipient list.
+    """
+    monkeypatch.setenv("NOTIFY_TO_EMAILS", "jill@example.com,office@example.com")
+    monkeypatch.delenv("ALERT_TO_EMAILS", raising=False)
+
+    sent = []
+    monkeypatch.setattr(
+        "alert.GraphMailSender",
+        lambda *a, **k: type("M", (), {"send": lambda self, to, s, b: sent.append(to)})(),
+    )
+    assert main() == 0
+    assert sent == [], "the alert must not mail the notifier's recipients"
+
+
+def test_alert_recipients_are_read_only_from_alert_to_emails(monkeypatch):
+    monkeypatch.setenv("NOTIFY_TO_EMAILS", "jill@example.com")
+    monkeypatch.setenv("ALERT_TO_EMAILS", "maintainer@example.com")
+
+    sent = []
+    monkeypatch.setattr(
+        "alert.GraphMailSender",
+        lambda *a, **k: type("M", (), {"send": lambda self, to, s, b: sent.append(to)})(),
+    )
+    assert main() == 0
+    assert sent == [["maintainer@example.com"]]
+    assert "jill@example.com" not in sent[0]
+
+
+def test_alert_source_does_not_reference_the_notifier_recipient_list():
+    """Belt and braces: the string must not appear in the module at all."""
+    import inspect
+
+    import alert
+
+    body = inspect.getsource(alert)
+    code = "\n".join(
+        line for line in body.splitlines()
+        if not line.strip().startswith("#")
+    )
+    # It appears in the module docstring explaining the separation, but must
+    # never be read as an environment variable.
+    assert 'environ.get("NOTIFY_TO_EMAILS"' not in code
+    assert 'environ["NOTIFY_TO_EMAILS"]' not in code

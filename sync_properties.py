@@ -124,18 +124,11 @@ def update_location(existing, row):
     address = build_address(row)
     zip_code = (row.get("Property Zip") or "").strip()
 
-    # Snipe-IT HTML-escapes text on the way out, so "402 & 404 Genesee Street"
-    # comes back as "402 &amp; 404 ..." and an apostrophe as &#039;. Comparing
-    # raw made any property containing & or ' look permanently out of date, so
-    # it was rewritten on every run.
-    differing = [
-        field
-        for field, want in (
-            ("name", name), ("city", city), ("state", state),
-            ("address", address), ("zip", zip_code),
-        )
-        if html.unescape((existing.get(field) or "").strip()) != want
-    ]
+    differing = fields_differing(
+        existing,
+        {"name": name, "city": city, "state": state,
+         "address": address, "zip": zip_code},
+    )
 
     if not differing:
         print(f"⏭️ No change: {name}")
@@ -231,6 +224,56 @@ def _normalize(s):
     return " ".join(s.split())
 
 
+def plan_units(units, parent_name, prop_subs, all_names):
+    """Decide what to create for one property's units.
+
+    Snipe-IT location names are globally unique, so a bare unit like "122"
+    can exist only once across every property. When the bare name is taken,
+    fall back to qualifying it with the parent — "Seminole Woods - 122".
+
+    Returns (to_create, existing_count, blocked) where to_create holds
+    (display_name, was_qualified) pairs and blocked lists units whose bare and
+    qualified names are both taken.
+
+      prop_subs  lowercased names already under this parent
+      all_names  every lowercased location name in Snipe-IT
+    """
+    to_create, existing, blocked = [], 0, []
+    for u in units:
+        bare = u.strip()
+        # A single-unit property lists the property itself as its only unit,
+        # so the name collides with its own parent. Qualifying that yields
+        # "Skyline Drive - Skyline Drive"; the parent location already
+        # represents it, so there is nothing to add.
+        if parent_name and bare.lower() == parent_name.lower():
+            existing += 1
+            continue
+        qualified = f"{parent_name} - {bare}" if parent_name else bare
+        if bare.lower() in prop_subs or qualified.lower() in prop_subs:
+            existing += 1
+        elif bare.lower() not in all_names:
+            to_create.append((bare, False))
+        elif qualified.lower() not in all_names:
+            to_create.append((qualified, True))
+        else:
+            blocked.append((bare, qualified))
+    return to_create, existing, blocked
+
+
+def fields_differing(existing, want):
+    """Field names whose stored value differs from what we intend to write.
+
+    Snipe-IT HTML-escapes text on output, so "402 & 404 Genesee Street" comes
+    back as "402 &amp; 404 ...". Comparing raw made every property containing
+    & or an apostrophe look permanently stale and rewritten on every run.
+    """
+    return [
+        field
+        for field, value in want.items()
+        if html.unescape((existing.get(field) or "").strip()) != value
+    ]
+
+
 def create_sublocation(name, parent_id):
     payload = {"name": name, "parent_id": parent_id}
     r = requests.post(
@@ -309,32 +352,12 @@ def sync_units(all_locs=None):
         prop_subs = existing_subs.get(parent_snipeit_id, {})
         parent_name = name_by_id.get(parent_snipeit_id, "")
 
-        # Names are globally unique in Snipe-IT, so a bare unit like "122" can
-        # only exist once across every property. When it's already taken, fall
-        # back to qualifying it with the parent — "Seminole Woods - 122".
-        # Both spellings are checked for existence so a qualified unit isn't
-        # recreated under its bare name on the next run.
-        to_create = []          # (display_name, was_qualified)
-        existing_count = 0
-        for u in units:
-            bare = u.strip()
-            # A single-unit property lists the property itself as its only
-            # unit, so the name collides with its own parent. Qualifying that
-            # yields "Skyline Drive - Skyline Drive"; the parent location
-            # already represents it, so there is nothing to add.
-            if parent_name and bare.lower() == parent_name.lower():
-                existing_count += 1
-                continue
-            qualified = f"{parent_name} - {bare}" if parent_name else bare
-            if bare.lower() in prop_subs or qualified.lower() in prop_subs:
-                existing_count += 1
-            elif bare.lower() not in all_names:
-                to_create.append((bare, False))
-            elif qualified.lower() not in all_names:
-                to_create.append((qualified, True))
-            else:
-                blocked += 1
-                print(f"  ⚠️  {bare!r} and {qualified!r} are both taken — skipping")
+        to_create, existing_count, blocked_here = plan_units(
+            units, parent_name, prop_subs, all_names
+        )
+        for bare, qualified in blocked_here:
+            print(f"  ⚠️  {bare!r} and {qualified!r} are both taken — skipping")
+        blocked += len(blocked_here)
 
         qualified_count = sum(1 for _, q in to_create if q)
         print(f"{prop_full}")

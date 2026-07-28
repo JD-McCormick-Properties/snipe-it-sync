@@ -920,6 +920,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "assets_with_urls": 0,
         "uploaded": 0,
         "skipped": 0,
+        "unresolved": 0,
         "failed": 0,
         "icloud_manual": 0,
     }
@@ -957,6 +958,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     icloud_pending.append((asset_tag_label, r.source_url))
                 elif r.skipped_reason in (None, "already_uploaded", "duplicate_hash"):
                     totals["skipped"] += 1
+                elif r.skipped_reason == "unresolved":
+                    # A share page that didn't render. Usually transient and
+                    # retried next run, so it's reported but not alerted on.
+                    totals["unresolved"] += 1
                 else:
                     totals["failed"] += 1
 
@@ -966,11 +971,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     log.info(
         "Done. assets_seen=%d assets_with_urls=%d uploaded=%d skipped=%d "
-        "failed=%d icloud_manual=%d",
+        "unresolved=%d failed=%d icloud_manual=%d",
         totals["assets_seen"],
         totals["assets_with_urls"],
         totals["uploaded"],
         totals["skipped"],
+        totals["unresolved"],
         totals["failed"],
         totals["icloud_manual"],
     )
@@ -985,6 +991,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         for asset_tag, url in icloud_pending:
             log.info("  [%s]  %s", asset_tag, url)
 
+    if totals["failed"]:
+        # Exit non-zero so the run is marked failed and the alert fires. A
+        # green run that quietly failed its writes is the thing this exists
+        # to prevent.
+        log.error("%d upload(s) failed — see errors above", totals["failed"])
+        return 1
     return 0
 
 

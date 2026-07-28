@@ -59,12 +59,18 @@ resolved (Apple blocks automated export) and are skipped.
 | `photo_sync.yml` | 2-hourly + manual | Photo sync |
 | `ac_unit_notify.yml` | 90-minutely + manual | AC unit checkout emails |
 | `tests.yml` | push / PR | All three test suites |
+| `alert_on_failure.yml` | on a failed run | Emails when a scheduled job doesn't succeed |
 | `cleanup_locations.yml` | manual | Remove redundant sublocations |
 | `cleanup_orphans.yml` | manual | Remove duplicate photo uploads |
 | `organize_photos.yml` | manual | File loose photos into event folders |
 
 Every maintenance workflow reports by default and requires an explicit input
 to make changes.
+
+Each sync exits non-zero when a write is rejected, not only when it crashes,
+so the alert covers silent failure too. That matters: the property sync once
+spent weeks reporting success while writing nothing, and no crash-based alert
+would have caught it.
 
 The photo sync, its cleanup tools, and the organizer share a concurrency group
 so they can never run against OneDrive at the same time.
@@ -80,7 +86,11 @@ Set as repository secrets. All three jobs use the same Snipe-IT token.
 | `ONEDRIVE_USER_ID` or `ONEDRIVE_DRIVE_ID` | photo sync |
 
 Repository variables: `ONEDRIVE_BASE_FOLDER`, `NOTIFY_FROM_EMAIL`,
-`NOTIFY_TO_EMAILS`, `NOTIFY_CATEGORY`.
+`NOTIFY_TO_EMAILS`, `NOTIFY_CATEGORY`, `ALERT_TO_EMAILS`.
+
+`ALERT_TO_EMAILS` receives workflow failure alerts and is separate from
+`NOTIFY_TO_EMAILS` on purpose — an AC unit checkout goes to the office, a sync
+failure goes to whoever maintains this. Leave it unset and alerts are skipped.
 
 The Azure app needs `Files.ReadWrite.All` for OneDrive and `Mail.Send` for the
 notifier, both as application permissions with admin consent. Setup details

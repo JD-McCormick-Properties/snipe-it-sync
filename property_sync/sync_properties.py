@@ -301,7 +301,7 @@ def sync_units(all_locs=None):
 
     if not os.path.exists(UNIT_DIRECTORY_CSV):
         print(f"⚠️  Unit directory CSV not found: {UNIT_DIRECTORY_CSV} — skipping unit sync")
-        return
+        return 0
 
     unit_map = parse_unit_directory(UNIT_DIRECTORY_CSV)
     prop_id_map = load_property_name_to_id(PROPERTIES_CSV)
@@ -390,6 +390,7 @@ def sync_units(all_locs=None):
     print(f"  Blocked (bare and qualified both taken): {blocked}")
     print(f"  Skipped:  {skipped}")
     print(f"  Unmatched properties: {unmatched}")
+    return failed
 
 
 # -------------------------------
@@ -438,8 +439,15 @@ def main():
     print(f"  Failed:  {failed}")
     print(f"  Skipped: {skipped}")
 
-    sync_units(all_locs)
+    unit_failures = sync_units(all_locs)
+
+    if failed or unit_failures:
+        # Snipe-IT rejected a write. Exit non-zero so the run is marked failed
+        # and the alert fires, rather than reporting success as it used to.
+        print(f"\n❌ {failed + unit_failures} write(s) rejected by Snipe-IT")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

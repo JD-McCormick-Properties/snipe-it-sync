@@ -2,8 +2,13 @@ import csv
 import html
 import os
 import time
+from pathlib import Path
 
 import requests
+
+# Data files live beside this script, so it runs from any working directory.
+DATA_DIR = Path(__file__).resolve().parent / "data"
+PROPERTIES_CSV = os.environ.get("PROPERTIES_CSV") or str(DATA_DIR / "properties.csv")
 
 SNIPE_URL = os.environ["SNIPE_URL"].strip().rstrip("/")
 API_KEY = os.environ["SNIPE_API_KEY"].strip()
@@ -14,7 +19,9 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-UNIT_DIRECTORY_CSV = os.environ.get("UNIT_DIRECTORY_CSV", "unit_directory.csv")
+UNIT_DIRECTORY_CSV = os.environ.get("UNIT_DIRECTORY_CSV") or str(
+    DATA_DIR / "unit_directory.csv"
+)
 
 # Requests never had a timeout; a hung connection would stall the whole run.
 TIMEOUT = 30
@@ -297,7 +304,7 @@ def sync_units(all_locs=None):
         return
 
     unit_map = parse_unit_directory(UNIT_DIRECTORY_CSV)
-    prop_id_map = load_property_name_to_id("properties.csv")
+    prop_id_map = load_property_name_to_id(PROPERTIES_CSV)
 
     # Build a normalized version of prop_id_map for fuzzy matching.
     norm_prop_id_map = {_normalize(k): v for k, v in prop_id_map.items()}
@@ -399,7 +406,7 @@ def main():
     skipped = 0
     failed = 0
 
-    with open("properties.csv", newline="", encoding="utf-8-sig") as f:
+    with open(PROPERTIES_CSV, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
 
         print("CSV Columns:", reader.fieldnames, "\n")

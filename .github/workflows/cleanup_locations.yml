@@ -27,8 +27,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-      - run: pip install -r requirements.txt
+      - working-directory: property_sync
+        run: pip install -r requirements.txt
       - name: Run cleanup
+        working-directory: property_sync
         env:
           SNIPE_URL: ${{ secrets.SNIPE_URL }}
           SNIPE_API_KEY: ${{ secrets.SNIPE_API_KEY }}

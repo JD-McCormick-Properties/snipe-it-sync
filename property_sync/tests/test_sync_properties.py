@@ -201,3 +201,25 @@ def test_property_id_mapping_skips_incomplete_rows(tmp_path):
 
 def test_normalize_collapses_whitespace():
     assert sp._normalize("202   S.  Randall   Ave.") == "202 S. Randall Ave."
+
+
+# --------------------------------------------------------------------- #
+# Exit status
+#
+# The run used to report success while Snipe-IT rejected every write. Failure
+# alerting is worthless unless a rejected write actually fails the run.
+# --------------------------------------------------------------------- #
+def test_sync_units_reports_its_failure_count():
+    """sync_units returns the number of rejected writes for main() to act on."""
+    import inspect
+
+    src = inspect.getsource(sp.sync_units)
+    assert "return failed" in src, "sync_units must report failures upward"
+
+
+def test_main_exits_non_zero_when_a_write_was_rejected():
+    import inspect
+
+    src = inspect.getsource(sp.main)
+    assert "return 1" in src
+    assert "unit_failures" in src, "unit failures must count toward the exit status"

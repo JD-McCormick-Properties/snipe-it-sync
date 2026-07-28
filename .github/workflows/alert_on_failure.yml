@@ -1,0 +1,50 @@
+name: Alert On Failure
+
+# Watches the scheduled jobs and emails when one does not succeed.
+#
+# The syncs exit non-zero when a write is rejected, not only when they crash,
+# so this covers the silent-failure case too: a run that reports success while
+# writing nothing now fails, and fails loudly.
+#
+# Set the ALERT_TO_EMAILS repository variable to whoever maintains this repo.
+# It is deliberately separate from NOTIFY_TO_EMAILS — an AC unit checkout goes
+# to the office, a sync failure does not. Unset, the alert is skipped.
+on:
+  workflow_run:
+    workflows:
+      - "Property Sync"
+      - "Photo Sync (Snipe-IT → OneDrive)"
+      - "AC Unit Checkout Notifier"
+    types: [completed]
+
+jobs:
+  alert:
+    # Covers failure, cancelled, and timed_out alike.
+    if: github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - working-directory: notifications
+        run: pip install -r requirements.txt
+
+      - name: Send alert
+        working-directory: notifications
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          NOTIFY_FROM_EMAIL: ${{ vars.NOTIFY_FROM_EMAIL }}
+          ALERT_TO_EMAILS: ${{ vars.ALERT_TO_EMAILS }}
+          ALERT_WORKFLOW: ${{ github.event.workflow_run.name }}
+          ALERT_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          ALERT_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          ALERT_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          ALERT_REPO: ${{ github.repository }}
+        run: python alert.py

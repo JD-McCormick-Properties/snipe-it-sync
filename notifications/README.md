@@ -48,6 +48,21 @@ Actions runs. Three properties matter, each covered by tests:
 - **State is saved even if the run raises**, so emails that already went out
   are never repeated.
 
+## Failure alerts
+
+`alert.py` emails when a scheduled workflow does not succeed, driven by
+`.github/workflows/alert_on_failure.yml` on a `workflow_run` completion. It
+reuses the Graph sender above.
+
+Recipients come from `ALERT_TO_EMAILS`, deliberately separate from
+`NOTIFY_TO_EMAILS`. Unset, the alert is skipped rather than mailed to the AC
+unit recipients.
+
+It fires on any non-success conclusion — failure, cancelled, timed out. All
+three syncs return a non-zero exit status when a write is rejected, so a run
+that would previously have reported success while writing nothing now fails
+and triggers this.
+
 ## Tests
 
 ```bash

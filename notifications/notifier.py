@@ -435,6 +435,9 @@ def main() -> int:
         state.save(cfg.state_path)
 
     log.info("Done. notified=%d failed=%d", notified, failed)
+    if failed:
+        log.error("%d notification(s) could not be sent", failed)
+        return 1
     return 0
 
 

@@ -83,6 +83,10 @@ def main() -> int:
 
     log.info("%d file(s), %d in named event folders", len(files), len(files) - undated)
     log.info("")
+    log.info("Photos in OneDrive, credited to whoever performed the check-in/check-out")
+    log.info("(the event folder is named after them, which is not necessarily the")
+    log.info("person who attached the photo — see the UPLOADS table below for that)")
+    log.info("")
     log.info("%-20s %7s %7s %9s  %s", "PERSON", "PHOTOS", "EVENTS", "VEHICLES", "LAST")
     log.info("%s", "-" * 62)
     for name, p in sorted(per_person.items(), key=lambda kv: -kv[1]["photos"]):
@@ -152,16 +156,19 @@ def main() -> int:
             native[_extract_uploader_name(e) or "unknown"] += 1
 
     people = sorted(set(checkouts) | set(native) | set(linked))
-    log.info("%-20s %10s %10s %10s", "PERSON", "CHECKOUTS", "SNIPEMOBILE", "LINKS")
+    log.info("%-20s %10s %10s %10s", "PERSON", "EVENTS", "UPLOADS", "LINK EVTS")
     log.info("%s", "-" * 55)
     for who in people:
         log.info("%-20s %10d %10d %10d",
                  who[:20], checkouts.get(who, 0), native.get(who, 0), linked.get(who, 0))
 
     log.info("")
-    log.info("CHECKOUTS   check-in/check-out events in the last 60 days")
-    log.info("SNIPEMOBILE 'uploaded' activity entries — files attached to the asset")
-    log.info("LINKS       events whose note contained a photo share link")
+    log.info("EVENTS     check-ins AND check-outs in the last 60 days, combined")
+    log.info("UPLOADS    'uploaded' activity entries — files attached via SnipeMobile,")
+    log.info("           credited to the person Snipe-IT names as the uploader")
+    log.info("LINK EVTS  events whose note held a share link. Counts events, not")
+    log.info("           photos — one album link can be a dozen photos, so this is")
+    log.info("           NOT comparable to the UPLOADS column")
     return 0
 
 

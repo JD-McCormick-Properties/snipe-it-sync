@@ -1,0 +1,32 @@
+name: Photo Usage Report
+
+# Read-only. Who is attaching photos, and whether they are using SnipeMobile
+# or still pasting share links.
+on:
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - working-directory: photo_sync
+        run: pip install -r requirements.txt
+      - name: Run report
+        working-directory: photo_sync
+        env:
+          SNIPE_URL: ${{ secrets.SNIPE_URL }}
+          SNIPE_API_KEY: ${{ secrets.SNIPE_API_KEY }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
+          ONEDRIVE_DRIVE_ID: ${{ secrets.ONEDRIVE_DRIVE_ID }}
+          ONEDRIVE_BASE_FOLDER: ${{ vars.ONEDRIVE_BASE_FOLDER || 'AssetPhotos' }}
+          LOG_LEVEL: INFO
+        run: python usage_report.py

@@ -107,9 +107,10 @@ def main() -> int:
         aid = info["id"]
 
         try:
-            entries = list(snipe.iter_asset_activity(aid))
+            entries_all = list(snipe.iter_asset_activity(aid))
         except Exception:
             continue
+        entries = entries_all
 
         for e in entries:
             action = (e.get("action_type") or "").lower()
@@ -131,18 +132,24 @@ def main() -> int:
             if extract_urls(e.get("note") or e.get("notes") or ""):
                 linked[who] += 1
 
-        try:
-            for up in snipe.get_asset_uploads(aid):
-                # attribute the file to whoever performed the nearest event
-                who = "unknown"
-                for e in entries:
-                    a = (e.get("action_type") or "").lower()
-                    if "checkin" in a or "checkout" in a:
-                        who = _extract_uploader_name(e) or "unknown"
-                        break
-                native[who] += 1
-        except Exception:
-            pass
+        # Snipe-IT records its own "uploaded" activity entry naming whoever
+        # attached the file. That is the real attribution — guessing from the
+        # nearest check-in/check-out gets it wrong whenever two people have
+        # attached files to the same vehicle.
+        for e in entries_all:
+            if "upload" not in (e.get("action_type") or "").lower():
+                continue
+            raw = _extract_entry_date(e)
+            if raw:
+                try:
+                    when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                    if when.tzinfo is None:
+                        when = when.replace(tzinfo=timezone.utc)
+                    if when < cutoff:
+                        continue
+                except ValueError:
+                    pass
+            native[_extract_uploader_name(e) or "unknown"] += 1
 
     people = sorted(set(checkouts) | set(native) | set(linked))
     log.info("%-20s %10s %10s %10s", "PERSON", "CHECKOUTS", "SNIPEMOBILE", "LINKS")
@@ -153,7 +160,7 @@ def main() -> int:
 
     log.info("")
     log.info("CHECKOUTS   check-in/check-out events in the last 60 days")
-    log.info("SNIPEMOBILE files attached to the asset (the in-app photo flow)")
+    log.info("SNIPEMOBILE 'uploaded' activity entries — files attached to the asset")
     log.info("LINKS       events whose note contained a photo share link")
     return 0
 

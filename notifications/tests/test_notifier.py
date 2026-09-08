@@ -16,6 +16,32 @@ import notifier as n
 
 
 # --------------------------------------------------------------------- #
+# Snipe-IT retry safety
+#
+# Only idempotent reads may retry.  In particular, this policy must never be
+# broadened to POST, because an ambiguous Microsoft Graph sendMail timeout can
+# otherwise produce a duplicate notification.
+# --------------------------------------------------------------------- #
+def test_snipe_client_retries_only_get_requests():
+    client = n.SnipeClient("https://snipe.invalid", "token")
+    retries = client.session.get_adapter("https://").max_retries
+
+    assert retries.total == n.SNIPE_RETRY_COUNT
+    assert retries.connect == n.SNIPE_RETRY_COUNT
+    assert retries.read == n.SNIPE_RETRY_COUNT
+    assert retries.allowed_methods == frozenset({"GET"})
+
+
+def test_snipe_client_retries_only_transient_http_statuses():
+    client = n.SnipeClient("https://snipe.invalid", "token")
+    retries = client.session.get_adapter("https://").max_retries
+
+    assert set(retries.status_forcelist) == set(n.SNIPE_RETRYABLE_STATUSES)
+    assert not ({400, 401, 403, 404} & set(retries.status_forcelist))
+    assert retries.respect_retry_after_header is True
+
+
+# --------------------------------------------------------------------- #
 # State persistence
 #
 # The state file lives in the Actions cache, which can miss or be evicted.

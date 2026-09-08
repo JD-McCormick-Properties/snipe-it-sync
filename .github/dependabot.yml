@@ -1,0 +1,33 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: "/photo_sync"
+    schedule:
+      interval: weekly
+    groups:
+      photo-sync-python:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: "/property_sync"
+    schedule:
+      interval: weekly
+    groups:
+      property-sync-python:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: "/notifications"
+    schedule:
+      interval: weekly
+    groups:
+      notification-python:
+        patterns: ["*"]

@@ -69,8 +69,8 @@ jobs:
           ONEDRIVE_BASE_FOLDER: ${{ vars.ONEDRIVE_BASE_FOLDER || 'AssetPhotos' }}
           LOG_LEVEL: INFO
         run: |
-          ARGS="--pass ${{ github.event.inputs.which }}"
+          ARGS=(--pass "${{ github.event.inputs.which }}")
           if [ "${{ github.event.inputs.delete }}" = "true" ]; then
-            ARGS="$ARGS --delete"
+            ARGS+=(--delete)
           fi
-          python cleanup_orphans.py $ARGS
+          python cleanup_orphans.py "${ARGS[@]}"

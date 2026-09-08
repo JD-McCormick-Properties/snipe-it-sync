@@ -45,8 +45,9 @@ Actions runs. Three properties matter, each covered by tests:
   prior state records what it finds and sends nothing.
 - **An id is recorded only after its email succeeds.** A Graph outage leaves
   the entry unseen so the next run retries, rather than dropping it silently.
-- **State is saved even if the run raises**, so emails that already went out
-  are never repeated.
+- **State is saved even if a later notification fails.** The workflow uses
+  separate restore/save actions and runs the save step unconditionally, so a
+  successful email is not forgotten merely because another item failed.
 
 ## Failure alerts
 
@@ -58,8 +59,9 @@ Recipients come from `ALERT_TO_EMAILS`, deliberately separate from
 `NOTIFY_TO_EMAILS`. Unset, the alert is skipped rather than mailed to the AC
 unit recipients.
 
-It fires on any non-success conclusion — failure, cancelled, timed out. All
-three syncs return a non-zero exit status when a write is rejected, so a run
+It fires for failures and timeouts. Cancelled runs are ignored because the
+application may never have started and a later scheduled run will recover.
+All three syncs return a non-zero exit status when a write is rejected, so a run
 that would previously have reported success while writing nothing now fails
 and triggers this.
 

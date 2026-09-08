@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -720,7 +721,20 @@ def process_asset(
     try:
         activity_entries = list(snipe.iter_asset_activity(asset_id))
     except Exception as exc:
-        log.warning("Could not fetch activity log for asset %s: %s", asset_id, exc)
+        # Activity data determines the destination event folder for native
+        # uploads. Continuing with an empty list would permanently file them
+        # under "File Uploads" and then mark them processed. Defer the whole
+        # asset so the next run can retry with complete source data.
+        log.error(
+            "Could not fetch activity log for asset %s; deferring asset: %s",
+            asset_id,
+            exc,
+        )
+        return [UploadResult(
+            source_url=f"activity:{asset_id}",
+            onedrive_url="",
+            skipped_reason="activity_fetch_failed",
+        )]
 
     batches = _collect_url_batches(info, asset_id, cfg, activity_entries)
     total_urls = sum(len(b.urls) for b in batches)
@@ -850,23 +864,40 @@ def _build_file_description(
 
 
 def _append_writeback(notes: str, results: List[UploadResult]) -> str:
-    """Append a 'OneDrive Backup:' section listing successful uploads.
+    """Merge successful uploads into the existing OneDrive backup block.
 
-    Idempotent — if the section is already in notes, replace it.
+    Existing links and any text after the block are preserved. Replacing the
+    block with only this run's uploads used to erase links written by earlier
+    runs whenever another photo was added to the same asset.
     """
     successful = [r for r in results if r.onedrive_url and not r.skipped_reason]
     if not successful:
         return notes
 
     marker = "OneDrive Backup:"
-    body_lines = [marker] + [f"- {r.onedrive_url}" for r in successful]
+    block_pattern = re.compile(
+        r"(?m)^OneDrive Backup:[ \t]*(?:\n[ \t]*-[ \t]+[^\n]*)*"
+    )
+    match = block_pattern.search(notes)
+
+    existing_urls: List[str] = []
+    if match:
+        for line in match.group(0).splitlines()[1:]:
+            value = line.strip()
+            if value.startswith("-"):
+                url = value[1:].strip()
+                if url:
+                    existing_urls.append(url)
+
+    new_urls = [r.onedrive_url for r in successful]
+    merged_urls = list(dict.fromkeys(existing_urls + new_urls))
+    body_lines = [marker] + [f"- {url}" for url in merged_urls]
     block = "\n".join(body_lines)
 
-    if marker in notes:
-        # Replace from marker to end of its block (until two newlines or EOF)
-        idx = notes.find(marker)
-        before = notes[:idx].rstrip()
-        return f"{before}\n\n{block}".strip()
+    if match:
+        before = notes[:match.start()].rstrip()
+        after = notes[match.end():].strip()
+        return "\n\n".join(part for part in (before, block, after) if part)
 
     base = notes.rstrip()
     if base:

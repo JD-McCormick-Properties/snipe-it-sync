@@ -20,11 +20,21 @@ from typing import Any, Dict, List, Optional, Set
 import msal
 import requests
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 log = logging.getLogger(__name__)
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_SCOPE = ["https://graph.microsoft.com/.default"]
+
+# Snipe-IT reads are safe to repeat: they cannot create, update, or check out
+# an asset.  A bounded retry policy keeps a brief Snipe-IT/network outage from
+# failing the notifier before it has even inspected the activity log.  Email
+# submission deliberately does not use this session or policy; retrying a
+# sendMail POST after an ambiguous timeout could duplicate a coworker email.
+SNIPE_RETRYABLE_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+SNIPE_RETRY_COUNT = 4
 
 
 # ------------------------------------------------------------------ #
@@ -105,10 +115,23 @@ class SnipeClient:
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         })
+        retries = Retry(
+            total=SNIPE_RETRY_COUNT,
+            connect=SNIPE_RETRY_COUNT,
+            read=SNIPE_RETRY_COUNT,
+            status=SNIPE_RETRY_COUNT,
+            other=0,
+            allowed_methods=frozenset({"GET"}),
+            status_forcelist=SNIPE_RETRYABLE_STATUSES,
+            backoff_factor=1,
+            backoff_max=15,
+            respect_retry_after_header=True,
+        )
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> dict:
         r = self.session.get(
-            f"{self.base_url}{path}", params=params, timeout=30
+            f"{self.base_url}{path}", params=params, timeout=(10, 30)
         )
         r.raise_for_status()
         return r.json()

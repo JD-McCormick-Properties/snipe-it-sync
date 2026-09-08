@@ -10,14 +10,65 @@ from conftest import activity
 from sync import (
     ACTIVITY_MATCH_WINDOW,
     UNMATCHED_UPLOAD_FOLDER,
+    UploadResult,
     _action_label,
+    _append_writeback,
     _event_subfolder_name,
     _extract_entry_date,
     _extract_uploader_name,
     _native_upload_folder,
     _nearest_activity_entry,
     _subfolder_filename,
+    process_asset,
 )
+
+
+# --------------------------------------------------------------------- #
+# Snipe-IT writeback
+# --------------------------------------------------------------------- #
+def _uploaded(url: str) -> UploadResult:
+    return UploadResult(source_url="source", onedrive_url=url)
+
+
+def test_writeback_preserves_existing_links_and_adds_new_ones():
+    notes = "Service notes\n\nOneDrive Backup:\n- https://drive/one"
+    updated = _append_writeback(notes, [_uploaded("https://drive/two")])
+
+    assert "Service notes" in updated
+    assert "- https://drive/one" in updated
+    assert "- https://drive/two" in updated
+
+
+def test_writeback_deduplicates_links_and_preserves_following_text():
+    notes = (
+        "Before\n\nOneDrive Backup:\n- https://drive/one\n"
+        "- https://drive/two\n\nWarranty information"
+    )
+    updated = _append_writeback(
+        notes, [_uploaded("https://drive/two"), _uploaded("https://drive/three")]
+    )
+
+    assert updated.count("https://drive/two") == 1
+    assert "https://drive/one" in updated
+    assert "https://drive/three" in updated
+    assert updated.endswith("Warranty information")
+
+
+def test_asset_is_deferred_when_activity_history_is_unavailable():
+    class UnavailableSnipe:
+        def iter_asset_activity(self, asset_id):
+            raise RuntimeError("temporary outage")
+
+    result = process_asset(
+        {"id": 7, "asset_tag": "AC-7", "notes": "https://example/image.jpg"},
+        cfg=object(),
+        snipe=UnavailableSnipe(),
+        drive=object(),
+        store=object(),
+    )
+
+    assert len(result) == 1
+    assert result[0].skipped_reason == "activity_fetch_failed"
 
 
 # --------------------------------------------------------------------- #

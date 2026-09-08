@@ -1,7 +1,7 @@
-requests>=2.31
-msal>=1.28
-python-dotenv>=1.0
-beautifulsoup4>=4.12
-pillow>=10.3
-pillow-heif>=0.16
-playwright>=1.43
+requests==2.32.5
+msal==1.38.0
+python-dotenv==1.2.1
+beautifulsoup4==4.15.0
+pillow==11.3.0
+pillow-heif==1.1.1
+playwright==1.60.0

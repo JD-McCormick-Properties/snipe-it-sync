@@ -151,7 +151,7 @@ All set in `.env` (and overridable via the GitHub Actions workflow vars):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `WRITE_BACK_TO_SNIPEIT` | `false` | Append a `OneDrive Backup:` block to each asset's notes after upload |
+| `WRITE_BACK_TO_SNIPEIT` | `false` | Merge uploaded links into the asset's `OneDrive Backup:` notes block |
 | `FORCE_RESYNC` | `false` | Re-upload every URL even if it's in the dedupe DB |
 | `DEDUPE_DB_PATH` | `photo_sync_state.db` | Path to the SQLite state file |
 | `ONEDRIVE_BASE_FOLDER` | `AssetPhotos` | Top-level folder name under the drive root |
@@ -189,8 +189,10 @@ after one pass rather than re-uploading once each.
 
 `--force` bypasses all three checks.
 
-The DB is cached between GitHub Actions runs (see workflow). For a clean
-slate, delete the file or pass `--force`.
+The DB is cached between GitHub Actions runs (see workflow). Its save step runs
+even after a partial sync failure so uploads completed earlier in that run are
+not forgotten and repeated. For a clean slate, delete the file or pass
+`--force`.
 
 ## Shared link resolution
 
@@ -247,6 +249,9 @@ has come back.
 - All long-running operations (Graph token, Snipe-IT pages, image
   downloads) have explicit timeouts. The Snipe-IT client retries on
   429/5xx with exponential backoff.
+- If an asset's activity history cannot be fetched, that asset is deferred and
+  the run fails visibly. Native uploads are never permanently filed using an
+  empty, incomplete history.
 - The OneDrive uploader switches automatically from the simple `PUT`
   endpoint to chunked upload sessions for files larger than 4 MB.
 - Nothing is hardcoded — every credential or path comes from `.env` or

@@ -41,13 +41,14 @@ concurrency:
 jobs:
   notify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
           cache: "pip"
@@ -56,7 +57,7 @@ jobs:
         run: pip install -r notifications/requirements.txt
 
       - name: Restore notifier state
-        uses: actions/cache@v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ac_notify_state.json
           key: ac-notify-state-${{ github.run_id }}
@@ -75,3 +76,13 @@ jobs:
           NOTIFY_CATEGORY: ${{ vars.NOTIFY_CATEGORY || 'AC Units' }}
           NOTIFY_STATE_PATH: ac_notify_state.json
         run: python notifications/notifier.py
+
+      # Persist successful sends even if a later notification fails. The
+      # combined cache action skips its post-save when a job exits nonzero,
+      # which can otherwise cause the successful email to be sent again.
+      - name: Save notifier state
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ac_notify_state.json
+          key: ac-notify-state-${{ github.run_id }}

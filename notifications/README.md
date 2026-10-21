@@ -59,8 +59,12 @@ Recipients come from `ALERT_TO_EMAILS`, deliberately separate from
 `NOTIFY_TO_EMAILS`. Unset, the alert is skipped rather than mailed to the AC
 unit recipients.
 
-It fires for failures and timeouts. Cancelled runs are ignored because the
-application may never have started and a later scheduled run will recover.
+It fires for failures and timeouts. GitHub reports a job that hit its
+`timeout-minutes` as *cancelled*, so cancelled runs are checked for GitHub's
+"exceeded the maximum execution time" annotation and alerted as `timed_out`
+when it is there. Other cancellations — infrastructure trouble, or a queued run
+superseded by a newer one — are ignored: the application may never have
+started and a later scheduled run will recover.
 All three syncs return a non-zero exit status when a write is rejected, so a run
 that would previously have reported success while writing nothing now fails
 and triggers this.

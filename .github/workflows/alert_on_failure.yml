@@ -24,33 +24,69 @@ on:
 
 jobs:
   alert:
-    # Only genuine failures. A cancelled run is not one: GitHub cancels jobs
-    # during infrastructure trouble, and the concurrency group cancels a run
-    # superseded by a newer one. Neither needs an email — on 2026-08-06 three
-    # cancelled notifier jobs produced alerts for a script that never ran, and
-    # nothing was missed because state is only saved after a successful send.
+    # Failures, plus cancelled runs so the next step can pick out timeouts.
     # A manual run has no workflow_run context and is allowed through so the
     # mail path stays testable.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'failure' ||
-      github.event.workflow_run.conclusion == 'timed_out'
+      github.event.workflow_run.conclusion == 'timed_out' ||
+      github.event.workflow_run.conclusion == 'cancelled'
     runs-on: ubuntu-latest
     # Sending one email takes seconds; anything longer is stuck.
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: read
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Most cancellations need no email: GitHub cancels jobs during
+      # infrastructure trouble, and the concurrency group cancels a run
+      # superseded by a newer one — on 2026-08-06 three such notifier runs
+      # produced alerts for a script that never ran. But GitHub also reports a
+      # job that hit its timeout-minutes as a cancelled run, never as
+      # timed_out, so a hang went unreported (photo sync, 2026-08-18, 08-19,
+      # 09-30). The job's own annotation is what tells the two apart.
+      - name: Decide whether to alert
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion || 'test' }}
+        run: |
+          send=true
+          if [ "$CONCLUSION" = "cancelled" ]; then
+            send=false
+            jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '.jobs[].id')
+            for job in $jobs; do
+              messages=$(gh api "repos/$REPO/check-runs/$job/annotations" --jq '.[].message')
+              if grep -q 'exceeded the maximum execution time' <<<"$messages"; then
+                send=true
+                CONCLUSION=timed_out
+              fi
+            done
+          fi
+          echo "Run concluded $CONCLUSION; send=$send"
+          echo "send=$send" >> "$GITHUB_OUTPUT"
+          echo "conclusion=$CONCLUSION" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - if: steps.decide.outputs.send == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - if: steps.decide.outputs.send == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
           cache: "pip"
 
-      - working-directory: notifications
+      - if: steps.decide.outputs.send == 'true'
+        working-directory: notifications
         run: pip install -r requirements.txt
 
       - name: Send alert
+        if: steps.decide.outputs.send == 'true'
         working-directory: notifications
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -59,7 +95,7 @@ jobs:
           NOTIFY_FROM_EMAIL: ${{ vars.NOTIFY_FROM_EMAIL }}
           ALERT_TO_EMAILS: ${{ vars.ALERT_TO_EMAILS }}
           ALERT_WORKFLOW: ${{ github.event.workflow_run.name || 'Manual alert test' }}
-          ALERT_CONCLUSION: ${{ github.event.workflow_run.conclusion || 'test' }}
+          ALERT_CONCLUSION: ${{ steps.decide.outputs.conclusion }}
           ALERT_RUN_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
           ALERT_RUN_NUMBER: ${{ github.event.workflow_run.run_number || github.run_number }}
           ALERT_REPO: ${{ github.repository }}

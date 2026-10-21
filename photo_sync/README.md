@@ -42,9 +42,6 @@ iCloud share links cannot be resolved — Apple blocks automated export. They
 are counted and listed at INFO, then skipped. Attach photos through
 SnipeMobile instead.
 
-This subproject lives next to the existing AppFolio location sync
-(`sync_properties.py`) and reuses the same repo for CI.
-
 ## Layout
 
 ```
@@ -52,6 +49,7 @@ photo_sync/
 ├── sync.py                 # entry point
 ├── cleanup_orphans.py      # maintenance: remove redundant uploads
 ├── organize_photos.py      # maintenance: file loose photos into event folders
+├── usage_report.py         # read-only: who attaches photos, and how
 ├── requirements.txt
 ├── requirements-dev.txt    # requirements.txt + pytest
 ├── .env.example            # copy to .env and fill in
@@ -155,6 +153,8 @@ All set in `.env` (and overridable via the GitHub Actions workflow vars):
 | `FORCE_RESYNC` | `false` | Re-upload every URL even if it's in the dedupe DB |
 | `DEDUPE_DB_PATH` | `photo_sync_state.db` | Path to the SQLite state file |
 | `ONEDRIVE_BASE_FOLDER` | `AssetPhotos` | Top-level folder name under the drive root |
+| `INCLUDE_HISTORY_NOTES` | `true` | Also read links from check-in/check-out notes, not just the asset's own notes |
+| `USE_PLAYWRIGHT` | `true` | Render Google Photos albums in headless Chromium; `false` skips them |
 | `LOG_LEVEL` | `INFO` | `DEBUG` to see per-URL details |
 
 CLI flags on `sync.py`:
@@ -271,7 +271,7 @@ has come back.
 
 ## Adding to GitHub Actions
 
-The workflow `/.github/workflows/photo_sync.yml` runs nightly. In the
+The workflow `/.github/workflows/photo_sync.yml` runs every 2 hours. In the
 repo's **Settings → Secrets and variables → Actions**, add these
 **Secrets**:
 
@@ -286,9 +286,18 @@ And these **Variables** (optional):
 
 - `ONEDRIVE_BASE_FOLDER`
 - `WRITE_BACK_TO_SNIPEIT`
+- `INCLUDE_HISTORY_NOTES`
+- `USE_PLAYWRIGHT`
 
 You can also trigger the workflow on demand from the Actions tab; the
 manual trigger exposes a `force` input that maps to `FORCE_RESYNC`.
+
+The job is pinned to `ubuntu-24.04` rather than `ubuntu-latest`, because
+Playwright installs Chromium's OS packages per distro release and did not
+support Ubuntu 26.04 when `ubuntu-latest` began moving to it. Move the pin
+deliberately once it does. The Playwright install is capped at 5 minutes per
+attempt with three attempts: a stalled Ubuntu mirror once hung it for the
+6-hour default.
 
 ## Stretch ideas
 

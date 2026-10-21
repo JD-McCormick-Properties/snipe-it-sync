@@ -215,6 +215,16 @@ loading, stopping once the image count stops growing — a fixed wait made
 every album cost the same 20 seconds regardless of size. Set
 `USE_PLAYWRIGHT=false` to skip these entirely.
 
+Albums are re-opened because a tech can add photos to one after posting the
+link, but rendering every album on every run was nearly all of each run's
+time. An album linked from a check-in/out is checked every run while the
+event is under 3 days old or the album has gained a photo in the last 3 days;
+after that it is checked once a day (`ALBUM_ACTIVE_WINDOW` and
+`SETTLED_ALBUM_RECHECK` in `sync.py`, tracked in the DB's `link_checks`
+table). A photo added to an old album therefore lands within a day rather
+than within two hours. Links in the asset image field or top-level notes, and
+any run with `--force`, are always checked.
+
 Every scraped Google CDN URL (`googleusercontent.com`, `ggpht.com`) is
 rewritten to `=s0` for the original-resolution variant, whether or not it
 arrived with a size suffix. This matters: the grid is scraped mid-render, so

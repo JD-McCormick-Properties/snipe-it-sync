@@ -21,7 +21,11 @@ concurrency:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest, which moves to Ubuntu 26.04 between
+    # 2026-10-19 and 2026-11-19. Playwright's --with-deps installs OS packages
+    # by distro release, and Chromium was not supported on 26.04 when that
+    # migration was announced. Move this deliberately once it is.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
@@ -47,9 +51,28 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('photo_sync/requirements.txt') }}
 
+      # The browser usually comes from the cache, but --with-deps still runs
+      # apt-get, and apt has no overall time limit. A stalled Ubuntu mirror hung
+      # this step on 2026-08-18, 08-19 and 09-30 — twice for the 6-hour default
+      # — and every sync queued behind it was dropped. A normal install takes
+      # under 30 seconds, so each attempt is capped at 5 minutes and retried.
+      # Three stalls in a row fail the step, which fails the run and alerts.
       - name: Install Playwright Chromium
         working-directory: photo_sync
-        run: python -m playwright install --with-deps chromium
+        timeout-minutes: 20
+        run: |
+          for attempt in 1 2 3; do
+            if timeout --kill-after=30s 5m python -m playwright install --with-deps chromium; then
+              exit 0
+            fi
+            echo "::warning::Playwright install attempt $attempt failed or stalled"
+            # A kill mid-install can leave dpkg half-configured, which would
+            # make the retry refuse to run.
+            sudo dpkg --configure -a || true
+            sleep 20
+          done
+          echo "::error::Playwright install failed 3 times"
+          exit 1
 
       - name: Restore dedupe DB
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

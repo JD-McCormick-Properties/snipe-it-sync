@@ -12,7 +12,7 @@ Three independent jobs, each scheduled through GitHub Actions:
 | [`notifications/`](notifications/) | Emails when an AC unit is checked out | every 90 minutes |
 
 Each is self-contained: its own dependencies, tests, and README. Nothing is
-shared between them except the Snipe-IT credentials.
+shared between them except credentials (see below).
 
 ## Layout
 
@@ -26,12 +26,16 @@ shared between them except the Snipe-IT credentials.
 │   ├── sync.py                       # entry point
 │   ├── cleanup_orphans.py            # maintenance
 │   ├── organize_photos.py            # maintenance
+│   ├── usage_report.py               # read-only: who attaches photos, and how
 │   ├── helpers/                      # Snipe-IT, OneDrive, image, dedupe
 │   └── tests/
 ├── notifications/
 │   ├── notifier.py                   # entry point
+│   ├── alert.py                      # failure alert email
 │   └── tests/
-└── .github/workflows/
+└── .github/
+    ├── workflows/
+    └── dependabot.yml                # weekly dependency update PRs
 ```
 
 ## Where photos come from
@@ -51,6 +55,11 @@ Photo links pasted into an asset's notes or a check-in/check-out note are also
 picked up — Google Photos shares and direct image URLs. iCloud links can't be
 resolved (Apple blocks automated export) and are skipped.
 
+Google Photos albums are re-opened to catch photos added after the link was
+posted: every run while the check-in/out is under 3 days old or the album is
+still growing, then once a day. A photo added to an old album lands within a
+day rather than within two hours.
+
 ## Workflows
 
 | Workflow | Trigger | Purpose |
@@ -58,11 +67,13 @@ resolved (Apple blocks automated export) and are skipped.
 | `sync.yml` | daily + manual | Property and unit sync |
 | `photo_sync.yml` | 2-hourly + manual | Photo sync |
 | `ac_unit_notify.yml` | 90-minutely + manual | AC unit checkout emails |
-| `tests.yml` | push / PR | All three test suites |
-| `alert_on_failure.yml` | on a failed run | Emails when a scheduled job doesn't succeed |
+| `tests.yml` | push / PR | All three test suites, plus actionlint on the workflows |
+| `codeql.yml` | push / PR / weekly | CodeQL security scan |
+| `alert_on_failure.yml` | on a failed or timed-out run | Emails when a scheduled job doesn't succeed |
 | `cleanup_locations.yml` | manual | Remove redundant sublocations |
 | `cleanup_orphans.yml` | manual | Remove duplicate photo uploads |
 | `organize_photos.yml` | manual | File loose photos into event folders |
+| `usage_report.yml` | manual | Who attaches photos, and through which route |
 
 Every maintenance workflow reports by default and requires an explicit input
 to make changes.
@@ -72,8 +83,25 @@ so the alert covers silent failure too. That matters: the property sync once
 spent weeks reporting success while writing nothing, and no crash-based alert
 would have caught it.
 
+GitHub reports a job that hit its time limit as *cancelled*, not failed, so the
+alert also checks cancelled runs and emails when one actually timed out.
+Ordinary cancellations — a superseded queued run, or GitHub infrastructure
+trouble — stay quiet.
+
 The photo sync, its cleanup tools, and the organizer share a concurrency group
 so they can never run against OneDrive at the same time.
+
+## Keeping it current
+
+Dependabot opens grouped pull requests weekly for the GitHub Actions and each
+subproject's Python requirements. Merge them once Tests and CodeQL pass. After
+any Pillow or pillow-heif update, check that the next photo sync reports
+`uploaded=0`: a change in image decoding could shift the perceptual hashes
+and re-upload photos that are already in OneDrive.
+
+Secret scanning with push protection is enabled, so a commit containing a
+credential is blocked before it reaches this public repo. Merged pull-request
+branches are deleted automatically.
 
 ## Credentials
 
@@ -118,6 +146,9 @@ this code:
 - Location names are **globally unique**, not unique per parent.
 - Offset pagination **needs an explicit sort**. Without one, records shift
   between pages and some are silently skipped.
+- The asset list **omits archived and deleted assets** unless a `status` is
+  requested. AC units are retired after checkout, so the notifier asks for
+  both explicitly.
 - Photo sources re-serve the same image with slightly different bytes, so
   deduplication is by perceptual hash within a small Hamming distance rather
   than by URL or byte hash.

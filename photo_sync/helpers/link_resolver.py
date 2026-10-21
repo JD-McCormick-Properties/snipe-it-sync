@@ -186,13 +186,25 @@ GPHOTOS_MAX_SCROLLS = 12            # ceiling for very large albums
 GPHOTOS_STABLE_ROUNDS = 2           # consecutive no-growth rounds before stopping
 
 
+def _host_is(url: str, *domains: str) -> bool:
+    """True when the URL's host is one of ``domains`` or a subdomain of one.
+
+    Substring and bare-suffix tests also matched lookalike hosts such as
+    ``icloud.com.example.net`` or ``notphotos.google.com.example``. Uses
+    ``hostname`` rather than ``netloc`` so a ``user@`` prefix or a port can't
+    stand in for the real host.
+    """
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
 def _upgrade_google_photos_url(url: str) -> str:
     """Google Photos thumbnails come back at low resolution by default.
 
     The `=w...-h...` query suffix controls dimensions. Strip it (or replace
     it with a larger size) to get the original/high-res variant.
     """
-    if "googleusercontent.com" not in url and "ggpht.com" not in url:
+    if not _host_is(url, "googleusercontent.com", "ggpht.com"):
         return url
     # Google's CDN uses '=' as a separator for size parameters. A scraped URL
     # may arrive with or without one depending on how far the album grid had
@@ -203,8 +215,7 @@ def _upgrade_google_photos_url(url: str) -> str:
 
 
 def is_google_photos_share(url: str) -> bool:
-    host = urlparse(url).netloc.lower()
-    return host.endswith("photos.app.goo.gl") or host.endswith("photos.google.com")
+    return _host_is(url, "photos.app.goo.gl", "photos.google.com")
 
 
 def is_icloud_share(url: str) -> bool:
@@ -213,18 +224,13 @@ def is_icloud_share(url: str) -> bool:
     Used by the orchestrator to short-circuit iCloud URLs before attempting
     resolution, since Apple actively blocks headless browsers and the newer
     "iCloud Link" format (icloudlinks/…) is not accessible via the legacy
-    sharedstreams API either.  These URLs require the manual WSL export
-    workaround described in the README.
+    sharedstreams API either. They are skipped and listed at INFO.
     """
-    host = urlparse(url).netloc.lower()
-    return "icloud.com" in host
+    return _host_is(url, "icloud.com")
 
 
 def _is_js_rendered_host(url: str) -> bool:
-    host = urlparse(url).netloc.lower()
-    return host in JS_RENDERED_HOSTS or any(
-        host.endswith("." + h) for h in JS_RENDERED_HOSTS
-    )
+    return _host_is(url, *JS_RENDERED_HOSTS)
 
 
 # ---------------------------------------------------------------------- #

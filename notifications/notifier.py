@@ -143,19 +143,34 @@ class SnipeClient:
                 return row["id"]
         return None
 
+    # Snipe-IT's asset list leaves out archived and deleted assets unless a
+    # status is asked for. AC units are retired once checked out, so a unit
+    # retired before this job's next run dropped off the watch list and its
+    # checkout was marked seen without an email (the list went 12 -> 9 when
+    # three were retired on 2026-09-29). Watching retired units can't cause an
+    # email by itself: they can't be checked out, and their past checkouts
+    # are already in the seen state.
+    WATCH_STATUSES = (None, "Archived", "Deleted")
+
     def get_asset_ids_in_category(self, category_id: int) -> Set[int]:
+        ids: Set[int] = set()
+        for status in self.WATCH_STATUSES:
+            ids |= self._category_asset_ids(category_id, status)
+        return ids
+
+    def _category_asset_ids(self, category_id: int, status: Optional[str]) -> Set[int]:
         ids: Set[int] = set()
         offset = 0
         while True:
-            data = self._get(
-                "/api/v1/hardware",
-                {
-                    "category_id": category_id, "limit": 500, "offset": offset,
-                    # Unsorted offset paging can repeat one row and skip
-                    # another, which would drop an AC unit from the watch list.
-                    "sort": "id", "order": "asc",
-                },
-            )
+            params: Dict[str, Any] = {
+                "category_id": category_id, "limit": 500, "offset": offset,
+                # Unsorted offset paging can repeat one row and skip
+                # another, which would drop an AC unit from the watch list.
+                "sort": "id", "order": "asc",
+            }
+            if status:
+                params["status"] = status
+            data = self._get("/api/v1/hardware", params)
             rows = data.get("rows") or []
             for row in rows:
                 ids.add(row["id"])
@@ -428,7 +443,7 @@ def main() -> int:
     log.info("Category '%s' → id=%d", cfg.category_name, category_id)
 
     ac_asset_ids = snipe.get_asset_ids_in_category(category_id)
-    log.info("%d assets in '%s'", len(ac_asset_ids), cfg.category_name)
+    log.info("%d assets in '%s' (including retired)", len(ac_asset_ids), cfg.category_name)
 
     checkouts = snipe.get_recent_checkouts()
     log.info("%d recent checkout events fetched", len(checkouts))

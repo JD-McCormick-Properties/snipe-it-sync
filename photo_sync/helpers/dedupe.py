@@ -42,6 +42,18 @@ CREATE TABLE IF NOT EXISTS uploads (
 
 CREATE INDEX IF NOT EXISTS idx_uploads_hash ON uploads (content_hash);
 CREATE INDEX IF NOT EXISTS idx_uploads_asset ON uploads (asset_id);
+
+-- When each Google Photos album link was last opened, and when it last
+-- yielded a photo not already uploaded. Lets a long-quiet album be checked
+-- once a day instead of on every run. Times are Unix seconds.
+CREATE TABLE IF NOT EXISTS link_checks (
+    asset_id        INTEGER NOT NULL,
+    source_url      TEXT NOT NULL,
+    first_checked   INTEGER NOT NULL,
+    last_checked    INTEGER NOT NULL,
+    last_new_photo  INTEGER,
+    PRIMARY KEY (asset_id, source_url)
+);
 """
 
 
@@ -151,6 +163,70 @@ class DedupeStore:
                 "UPDATE uploads SET perceptual_hash = ? "
                 "WHERE asset_id = ? AND content_hash = ? AND perceptual_hash IS NULL",
                 (perceptual_hash, asset_id, content_hash),
+            )
+
+    def link_is_settled(
+        self,
+        asset_id: int,
+        source_url: str,
+        *,
+        event_time: float,
+        now: float,
+        active_window: float,
+        recheck_every: float,
+    ) -> bool:
+        """True if an album link can skip this run's check.
+
+        A link stays active — checked every run — for ``active_window``
+        seconds after its event and after it last yielded a new photo, since
+        that is when a tech is still adding pictures. Once quiet past that, it
+        is checked once per ``recheck_every`` seconds. A link never checked
+        before is never settled.
+
+        ``event_time`` is when the check-in/out happened. If it couldn't be
+        parsed the caller passes "now", so the first check stands in for it
+        rather than keeping the link active forever.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT first_checked, last_checked, last_new_photo FROM link_checks "
+                "WHERE asset_id = ? AND source_url = ?",
+                (asset_id, source_url),
+            ).fetchone()
+        if row is None:
+            return False
+        active_since = max(
+            min(event_time, row["first_checked"]), row["last_new_photo"] or 0
+        )
+        if now - active_since < active_window:
+            return False
+        return now - row["last_checked"] < recheck_every
+
+    def record_link_check(
+        self,
+        asset_id: int,
+        source_url: str,
+        *,
+        found_new: bool,
+        now: Optional[float] = None,
+    ) -> None:
+        """Note that an album link was opened, and whether it had new photos.
+
+        Call only after the album actually resolved; a failed render must not
+        count as a check, or the link would wait a day for its retry.
+        """
+        ts = int(now if now is not None else time.time())
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO link_checks
+                  (asset_id, source_url, first_checked, last_checked, last_new_photo)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (asset_id, source_url) DO UPDATE SET
+                  last_checked = excluded.last_checked,
+                  last_new_photo = COALESCE(excluded.last_new_photo, link_checks.last_new_photo)
+                """,
+                (asset_id, source_url, ts, ts, ts if found_new else None),
             )
 
 

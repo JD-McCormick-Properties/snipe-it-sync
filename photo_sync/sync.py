@@ -195,6 +195,53 @@ ACTIVITY_MATCH_WINDOW = timedelta(minutes=1)
 # claim it — typically attached through SnipeMobile's Files tab.
 UNMATCHED_UPLOAD_FOLDER = "File Upload"
 
+# Google Photos album links have to be re-opened in a headless browser to see
+# whether photos were added, and that was nearly all of each run's time — one
+# vehicle with 32 linked albums cost about five minutes a run, every two hours.
+# An album linked from a check-in/out is checked every run while the event is
+# recent or the album is still gaining photos; once it has been quiet for
+# ALBUM_ACTIVE_WINDOW it is checked once per SETTLED_ALBUM_RECHECK, so a photo
+# added to an old album lands within a day rather than within two hours.
+ALBUM_ACTIVE_WINDOW = timedelta(days=3)
+SETTLED_ALBUM_RECHECK = timedelta(hours=24)
+
+
+def _event_epoch(date: str) -> float:
+    """Unix time of an event date string; "now" if it is missing or unreadable.
+
+    Snipe-IT dates carry no zone. Reading them as UTC is off by a few hours,
+    which is immaterial against ALBUM_ACTIVE_WINDOW.
+    """
+    dt = parse_dt(date) if date else datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def _album_is_settled(store: DedupeStore, asset_id: int, url: str, batch: "_UrlBatch", cfg: "Config") -> bool:
+    """Whether this run can skip re-opening an album link (see ALBUM_ACTIVE_WINDOW).
+
+    Only links from check-in/out notes qualify. Those always get an event
+    subfolder, so skipping one cannot change where a sibling photo is filed;
+    for the asset image and top-level notes the batch size decides that.
+    """
+    if cfg.force_resync or batch.source != "activity":
+        return False
+    return store.link_is_settled(
+        asset_id,
+        url,
+        event_time=_event_epoch(batch.date),
+        now=datetime.now(timezone.utc).timestamp(),
+        active_window=ALBUM_ACTIVE_WINDOW.total_seconds(),
+        recheck_every=SETTLED_ALBUM_RECHECK.total_seconds(),
+    )
+
+
+# Skip reasons that mean "nothing to do", as opposed to a failure. Anything
+# not listed here (or "unresolved"/"icloud_manual", counted separately) makes
+# the run exit non-zero and alert.
+SKIPPED_REASONS = (None, "already_uploaded", "duplicate_hash", "settled_link")
+
 
 def _nearest_activity_entry(
     upload_dt: datetime, activity_entries: List[Dict]
@@ -366,9 +413,13 @@ def _process_batch(
         if is_google_photos_share(url):
             # Always use the album resolver — handles single photos too.
             # Skip is_processed check; rely on content-hash dedup so new
-            # photos added to an existing album are picked up on the next run.
+            # photos added to an existing album are picked up on a later run.
             if not cfg.use_playwright:
                 results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="unresolved"))
+                continue
+            if _album_is_settled(store, asset_id, url, batch, cfg):
+                log.info("  Album quiet, checked within %s — skipping: %s", SETTLED_ALBUM_RECHECK, url)
+                results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="settled_link"))
                 continue
             log.info("  Resolving Google Photos album: %s", url)
             photos = resolve_google_photos_album(url)
@@ -376,6 +427,7 @@ def _process_batch(
                 log.warning("  Could not resolve Google Photos album: %s", url)
                 results.append(UploadResult(source_url=url, onedrive_url="", skipped_reason="unresolved"))
                 continue
+            pending_before = len(resolved_photos)
             for photo in photos:
                 batch_size += 1
                 content, mime, ext = normalize_image(photo.content, photo.mime_type, photo.extension)
@@ -389,6 +441,13 @@ def _process_batch(
                         continue
                 resolved_photos.append(
                     (url, content, mime, ext, photo.final_url, digest, batch_size, phash)
+                )
+            if not cfg.force_resync:
+                # A new photo here marks the album active, so if its upload
+                # fails below the next run opens the album again and retries.
+                # --force bypasses dedupe, so it says nothing about newness.
+                store.record_link_check(
+                    asset_id, url, found_new=len(resolved_photos) > pending_before
                 )
         else:
             batch_size += 1
@@ -987,7 +1046,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 elif r.skipped_reason == "icloud_manual":
                     totals["icloud_manual"] += 1
                     icloud_pending.append((asset_tag_label, r.source_url))
-                elif r.skipped_reason in (None, "already_uploaded", "duplicate_hash"):
+                elif r.skipped_reason in SKIPPED_REASONS:
                     totals["skipped"] += 1
                 elif r.skipped_reason == "unresolved":
                     # A share page that didn't render. Usually transient and

@@ -156,3 +156,89 @@ def test_backfill_with_none_is_a_no_op(store):
     _record(store, content_hash="c1", perceptual_hash=ZERO)
     store.backfill_perceptual_hash(1, "c1", None)
     assert store.has_perceptual_match_for_asset(1, ZERO)
+
+
+# --------------------------------------------------------------------- #
+# Album re-check schedule
+#
+# Every album link was re-opened in a headless browser on every run, which
+# was nearly all of each run's time. A quiet album is now checked daily —
+# but a recent or still-growing one must never be skipped.
+# --------------------------------------------------------------------- #
+DAY = 86_400
+WINDOW = 3 * DAY
+RECHECK = DAY
+NOW = 1_800_000_000.0
+OLD_EVENT = NOW - 30 * DAY
+
+
+def _settled(store, *, event_time=OLD_EVENT, now=NOW, url="album"):
+    return store.link_is_settled(
+        1, url, event_time=event_time, now=now,
+        active_window=WINDOW, recheck_every=RECHECK,
+    )
+
+
+def test_a_never_checked_link_is_not_settled(store):
+    assert not _settled(store)
+
+
+def test_quiet_old_album_checked_recently_is_settled(store):
+    store.record_link_check(1, "album", found_new=False, now=NOW - 2 * 3600)
+    assert _settled(store)
+
+
+def test_quiet_old_album_is_rechecked_once_a_day(store):
+    store.record_link_check(1, "album", found_new=False, now=NOW - RECHECK - 60)
+    assert not _settled(store)
+
+
+def test_recent_event_is_checked_every_run(store):
+    store.record_link_check(1, "album", found_new=False, now=NOW - 60)
+    assert not _settled(store, event_time=NOW - 2 * DAY)
+
+
+def test_album_that_just_gained_photos_stays_active(store):
+    store.record_link_check(1, "album", found_new=True, now=NOW - 60)
+    assert not _settled(store)
+
+
+def test_a_quiet_check_does_not_erase_a_recent_new_photo(store):
+    store.record_link_check(1, "album", found_new=True, now=NOW - DAY)
+    store.record_link_check(1, "album", found_new=False, now=NOW - 60)
+    assert not _settled(store)
+
+
+def test_activity_ends_after_the_window(store):
+    store.record_link_check(1, "album", found_new=True, now=NOW - WINDOW - 3600)
+    store.record_link_check(1, "album", found_new=False, now=NOW - 60)
+    assert _settled(store)
+
+
+def test_unreadable_event_date_falls_back_to_the_first_check(store):
+    """The caller passes "now" when a date won't parse; the link must still
+    settle eventually instead of staying active forever."""
+    store.record_link_check(1, "album", found_new=False, now=NOW - 10 * DAY)
+    store.record_link_check(1, "album", found_new=False, now=NOW - 60)
+    assert _settled(store, event_time=NOW)
+
+
+def test_link_checks_are_scoped_to_the_asset(store):
+    store.record_link_check(2, "album", found_new=False, now=NOW - 60)
+    assert not _settled(store)
+
+
+def test_existing_db_gains_the_link_checks_table(tmp_path):
+    """The cached production DB predates the table; opening it must add it
+    without touching the upload records."""
+    path = tmp_path / "state.db"
+    _record(DedupeStore(path))
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE link_checks")
+    conn.commit()
+    conn.close()
+
+    store = DedupeStore(path)
+    store.record_link_check(1, "album", found_new=False, now=NOW - 60)
+    assert _settled(store)
+    assert store.is_processed(1, "u1")

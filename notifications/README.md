@@ -3,6 +3,11 @@
 Emails when an asset in the **AC Units** category is checked out. Runs every
 90 minutes via `.github/workflows/ac_unit_notify.yml`.
 
+Units are retired once checked out, which can happen before the next run. The watch list
+therefore includes archived and deleted units as well as active ones —
+Snipe-IT's asset list omits those by default, which would drop the email for
+any unit retired before the notifier saw its checkout.
+
 Mail goes out through the Microsoft Graph API using the same Azure app
 registration as the photo sync, which needs the `Mail.Send` application
 permission with admin consent.

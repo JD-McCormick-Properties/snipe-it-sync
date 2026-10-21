@@ -158,6 +158,62 @@ def test_entry_without_an_id_is_ignored():
 
 
 # --------------------------------------------------------------------- #
+# Retired units
+#
+# AC units are retired once checked out, and Snipe-IT's asset list omits
+# archived and deleted assets by default. A unit retired before the next run
+# fell off the watch list, so its checkout counted as "unwatched" and was
+# recorded without an email.
+# --------------------------------------------------------------------- #
+class _ListingSnipe(n.SnipeClient):
+    """Answers /hardware listings from a {status: [asset ids]} table."""
+
+    def __init__(self, by_status):
+        super().__init__("https://snipe.invalid", "token")
+        self.by_status = by_status
+        self.requests = []
+
+    def _get(self, path, params=None):
+        params = dict(params or {})
+        self.requests.append(params)
+        rows = [{"id": i} for i in self.by_status.get(params.get("status"), [])]
+        return {"rows": rows[params["offset"]:], "total": len(rows)}
+
+
+def test_watch_list_includes_archived_and_deleted_units():
+    snipe = _ListingSnipe({None: [1, 2], "Archived": [3], "Deleted": [4]})
+    assert snipe.get_asset_ids_in_category(11) == {1, 2, 3, 4}
+
+
+def test_active_listing_is_still_requested_unfiltered():
+    snipe = _ListingSnipe({None: [1]})
+    snipe.get_asset_ids_in_category(11)
+    assert [r.get("status") for r in snipe.requests] == [None, "Archived", "Deleted"]
+    assert all(r["category_id"] == 11 for r in snipe.requests)
+
+
+def test_unit_retired_before_the_run_still_gets_its_email():
+    snipe = _ListingSnipe({None: [1], "Archived": [7]})
+    sent = []
+    ok, failed = n.process_checkouts(
+        [checkout(500, asset_id=7)], snipe.get_asset_ids_in_category(11),
+        _state(), lambda e, a: sent.append(a),
+    )
+    assert (ok, failed) == (1, 0) and sent == [7]
+
+
+def test_retired_unit_already_notified_is_not_emailed_again():
+    """Its earlier checkout is in the seen state from when it was active."""
+    snipe = _ListingSnipe({"Archived": [7]})
+    sent = []
+    ok, _ = n.process_checkouts(
+        [checkout(500, asset_id=7)], snipe.get_asset_ids_in_category(11),
+        _state(500), lambda e, a: sent.append(a),
+    )
+    assert ok == 0 and sent == []
+
+
+# --------------------------------------------------------------------- #
 # Email content
 #
 # Snipe-IT HTML-escapes its output, so pre-escaped values must pass through

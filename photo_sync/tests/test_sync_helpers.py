@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
-from conftest import activity
+from conftest import activity, encode, make_photo
 
+import sync
+from helpers.dedupe import DedupeStore
+from helpers.image_utils import hash_bytes
 from sync import (
     ACTIVITY_MATCH_WINDOW,
+    SKIPPED_REASONS,
     UNMATCHED_UPLOAD_FOLDER,
     UploadResult,
+    _UrlBatch,
     _action_label,
     _append_writeback,
     _event_subfolder_name,
@@ -18,6 +25,7 @@ from sync import (
     _extract_uploader_name,
     _native_upload_folder,
     _nearest_activity_entry,
+    _process_batch,
     _subfolder_filename,
     process_asset,
 )
@@ -282,3 +290,117 @@ def test_unmatched_upload_never_lands_loose_in_the_model_folder():
 
 def test_file_upload_folder_is_shared_across_unmatched_uploads():
     assert _native_upload_folder(BASE, None) == _native_upload_folder(BASE, None)
+
+
+# --------------------------------------------------------------------- #
+# Skipping quiet album links
+#
+# Each album link was re-opened in a headless browser on every run. Quiet ones
+# from old check-ins/outs are now checked daily. What must not change: a
+# skipped album never counts as a failure (that would fail and alert every
+# run), and anything recent, unchecked, forced, or outside a check-in/out
+# note is still opened.
+# --------------------------------------------------------------------- #
+ALBUM = "https://photos.app.goo.gl/abc123"
+OLD_DATE = "2026-01-05 09:00:00"
+
+
+def _batch(source="activity", date=OLD_DATE):
+    return _UrlBatch(urls=[ALBUM], uploader="Nick Brown", date=date,
+                     action_type="checkout", source=source)
+
+
+def _cfg(force=False):
+    return SimpleNamespace(force_resync=force, use_playwright=True)
+
+
+class _Resolver:
+    """Stands in for the headless-browser album resolver and counts calls."""
+
+    def __init__(self, photos=()):
+        self.photos = list(photos)
+        self.calls = 0
+
+    def __call__(self, url):
+        self.calls += 1
+        return self.photos
+
+
+def _run(store, batch, cfg, resolver, monkeypatch):
+    monkeypatch.setattr(sync, "resolve_google_photos_album", resolver)
+    return _process_batch(
+        batch, asset_id=1, asset_name="Truck", asset_tag="T-1", safe_tag="T-1",
+        info={}, cfg=cfg, drive=object(), store=store, base_folder="AssetPhotos/Vehicle/Truck",
+    )
+
+
+@pytest.fixture
+def uploaded_photo(tmp_path):
+    """A store that already holds the one photo the album contains."""
+    content = encode(make_photo(3))
+    store = DedupeStore(tmp_path / "state.db")
+    store.record_upload(
+        asset_id=1, asset_tag="T-1", source_url="cdn-url", content_hash=hash_bytes(content),
+        onedrive_file_id="f", onedrive_url="w", filename="Truck - 1.jpg",
+    )
+    photo = SimpleNamespace(content=content, mime_type="image/jpeg", extension="jpg",
+                            final_url="cdn-url")
+    return store, photo
+
+
+def test_settled_link_is_counted_as_skipped_not_failed():
+    assert "settled_link" in SKIPPED_REASONS
+
+
+def test_quiet_old_album_is_opened_once_then_skipped(uploaded_photo, monkeypatch):
+    store, photo = uploaded_photo
+    resolver = _Resolver([photo])
+
+    _run(store, _batch(), _cfg(), resolver, monkeypatch)
+    results = _run(store, _batch(), _cfg(), resolver, monkeypatch)
+
+    assert resolver.calls == 1
+    assert [r.skipped_reason for r in results] == ["settled_link"]
+
+
+def test_recent_event_album_is_opened_every_run(uploaded_photo, monkeypatch):
+    store, photo = uploaded_photo
+    resolver = _Resolver([photo])
+    today = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+
+    for _ in range(3):
+        _run(store, _batch(date=today), _cfg(), resolver, monkeypatch)
+
+    assert resolver.calls == 3
+
+
+def test_only_check_in_out_links_are_ever_skipped(uploaded_photo, monkeypatch):
+    store, photo = uploaded_photo
+    resolver = _Resolver([photo])
+
+    for _ in range(3):
+        _run(store, _batch(source="top_notes"), _cfg(), resolver, monkeypatch)
+
+    assert resolver.calls == 3
+
+
+def test_force_resync_never_skips(uploaded_photo, monkeypatch):
+    store, photo = uploaded_photo
+    resolver = _Resolver([photo])
+    _run(store, _batch(), _cfg(), resolver, monkeypatch)
+
+    forced = _Resolver([])
+    _run(store, _batch(), _cfg(force=True), forced, monkeypatch)
+
+    assert forced.calls == 1
+
+
+def test_a_failed_render_is_not_counted_as_a_check(tmp_path, monkeypatch):
+    store = DedupeStore(tmp_path / "state.db")
+    failing = _Resolver([])
+
+    first = _run(store, _batch(), _cfg(), failing, monkeypatch)
+    _run(store, _batch(), _cfg(), failing, monkeypatch)
+
+    assert [r.skipped_reason for r in first] == ["unresolved"]
+    assert failing.calls == 2

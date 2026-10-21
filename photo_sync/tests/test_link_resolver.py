@@ -59,6 +59,14 @@ def test_non_google_urls_pass_through_untouched():
         ("https://photos.google.com/share/abc", True),
         ("https://example.com/photos.app.goo.gl", False),
         ("https://share.icloud.com/photos/abc", False),
+        # A bare endswith() with no leading dot accepted these.
+        ("https://notphotos.google.com/share/abc", False),
+        ("https://myphotos.app.goo.gl/abc", False),
+        # Matching netloc rather than hostname let userinfo or a port
+        # decide the result.
+        ("https://photos.google.com@example.net/share/abc", False),
+        ("https://photos.google.com:443/share/abc", True),
+        ("https://PHOTOS.APP.GOO.GL/abc", True),
     ],
 )
 def test_google_photos_detection(url, is_gphotos):
@@ -70,11 +78,26 @@ def test_google_photos_detection(url, is_gphotos):
     [
         ("https://share.icloud.com/photos/abc", True),
         ("https://www.icloud.com/photos/abc", True),
+        ("https://icloud.com/photos/abc", True),
         ("https://photos.app.goo.gl/abc", False),
+        # A substring test accepted any host containing "icloud.com".
+        ("https://icloud.com.example.net/photos/abc", False),
+        ("https://noticloud.com/photos/abc", False),
     ],
 )
 def test_icloud_detection(url, is_icloud):
     assert is_icloud_share(url) is is_icloud
+
+
+def test_upgrade_ignores_google_cdn_names_outside_the_host():
+    url = "https://example.com/redirect?to=lh3.googleusercontent.com/pw/X=w100"
+    assert _upgrade_google_photos_url(url) == url
+
+
+def test_upgrade_handles_scheme_relative_cdn_urls():
+    assert _upgrade_google_photos_url("//lh3.googleusercontent.com/pw/X=w100") == (
+        "//lh3.googleusercontent.com/pw/X=s0"
+    )
 
 
 # --------------------------------------------------------------------- #

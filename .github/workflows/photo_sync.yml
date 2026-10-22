@@ -56,20 +56,38 @@ jobs:
       # this step on 2026-08-18, 08-19 and 09-30 — twice for the 6-hour default
       # — and every sync queued behind it was dropped. A normal install takes
       # under 30 seconds, so each attempt is capped at 5 minutes and retried.
-      # Three stalls in a row fail the step, which fails the run and alerts.
+      # Three failures in a row fail the step, which fails the run and alerts.
       - name: Install Playwright Chromium
         working-directory: photo_sync
         timeout-minutes: 20
         run: |
+          # apt's own network limits, so a stalled download errors and is
+          # retried (from the next mirror in the runner's mirror list) within
+          # seconds instead of using up a whole attempt. The lock timeout makes
+          # apt wait briefly for a straggler rather than fail on the spot.
+          printf '%s\n' \
+            'Acquire::Retries "3";' \
+            'Acquire::http::Timeout "30";' \
+            'Acquire::https::Timeout "30";' \
+            'DPkg::Lock::Timeout "60";' \
+            | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
+
           for attempt in 1 2 3; do
             if timeout --kill-after=30s 5m python -m playwright install --with-deps chromium; then
               exit 0
             fi
             echo "::warning::Playwright install attempt $attempt failed or stalled"
-            # A kill mid-install can leave dpkg half-configured, which would
-            # make the retry refuse to run.
+            # The timeout stops Playwright but not the apt-get it launched
+            # through sudo. On 2026-10-22 that apt-get kept running and held
+            # the dpkg lock, so attempts 2 and 3 failed in seconds on the lock
+            # instead of retrying. Stop it, then let dpkg finish anything a
+            # kill interrupted.
+            sudo pkill -9 -x apt-get || true
+            sudo pkill -9 -f '^/usr/lib/apt/methods/' || true
+            sudo pkill -9 -x dpkg || true
+            sleep 5
             sudo dpkg --configure -a || true
-            sleep 20
+            sleep 15
           done
           echo "::error::Playwright install failed 3 times"
           exit 1

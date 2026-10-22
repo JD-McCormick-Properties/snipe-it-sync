@@ -236,6 +236,68 @@ network work. Apple blocks headless browsers, and a direct sharedstreams API
 client was tried and removed — it couldn't reach the newer `icloudlinks/…`
 share format. Attach photos through SnipeMobile instead.
 
+## Maintenance tools
+
+Three scripts sit beside the sync, each with a manual workflow of the same
+name. All of them report by default and change nothing unless asked.
+
+### `cleanup_orphans.py` — remove redundant uploads
+
+Two detection passes for files earlier versions of the sync left behind:
+
+- **thumbnails**: Google Photos grid thumbnails uploaded instead of the
+  originals before the `=s0` fix. Detected by size, under
+  `--max-thumbnail-bytes` (default 400 KB; thumbnails were 78–108 KB and real
+  photos are 1–6 MB).
+- **duplicates**: the same photo written again under a new name when
+  activity dates failed to parse. Detected by downloading candidates and
+  comparing perceptual hashes.
+
+```bash
+python cleanup_orphans.py                      # report both passes
+python cleanup_orphans.py --pass duplicates    # thumbnails | duplicates | both
+python cleanup_orphans.py --delete             # actually remove
+```
+
+Only files matching the sync's own naming patterns are candidates, so
+anything a person added by hand is never touched. Duplicate groups never
+cross folders and always keep one file, the earliest. Deleted files go to
+the OneDrive recycle bin, not a permanent purge. The workflow restores the
+dedupe DB read-only, so a cleanup never changes what the sync believes it
+has uploaded.
+
+### `organize_photos.py` — file loose photos into event folders
+
+A one-time repair for photos uploaded before every check-in/out got its own
+folder, when a single-photo checkout landed loose in the model folder.
+A loose file whose name carries an uploader is matched back to its activity
+entry and moved into that event's folder. One with no uploader came from the
+asset image or top-level notes, has no event, and is left alone.
+
+```bash
+python organize_photos.py                    # report what would move
+python organize_photos.py --apply            # move them
+python organize_photos.py --apply --keep-redundant
+```
+
+Moves keep file contents and OneDrive version history. When the event folder
+already holds the same photo, the loose copy is redundant and goes to the
+OneDrive recycle bin, unless `--keep-redundant` is given.
+
+### `usage_report.py` — who attaches photos, and how
+
+Read-only. Prints two tables:
+
+- **OneDrive**: photos, events and vehicles per person, and when each last
+  added one, read from the event folder names.
+- **Snipe-IT (last 60 days)**: per person, check-ins/outs, photos attached
+  in the app (Snipe-IT's own `uploaded` entries), and events whose note held
+  a share link. A link event can be a whole album, so it isn't comparable to
+  an upload count.
+
+The workflow log is public on a public repository, so treat this report's
+output as visible to anyone.
+
 ## Tests
 
 ```
@@ -264,6 +326,12 @@ has come back.
   empty, incomplete history.
 - The OneDrive uploader switches automatically from the simple `PUT`
   endpoint to chunked upload sessions for files larger than 4 MB.
+- Each uploaded file gets a OneDrive description, shown in its details pane:
+  `Asset: {name} ({tag}) | Uploaded by: {person} | Date: {event date} |
+  Source: {original URL}`. A photo found in a folder can be traced back to
+  its asset and event without opening Snipe-IT.
+- HEIC photos, the iPhone default, are converted to JPG before upload so
+  they preview everywhere. Other formats are uploaded unchanged.
 - Nothing is hardcoded — every credential or path comes from `.env` or
   GitHub secrets.
 - Failures on a single asset never abort the whole run; they're logged

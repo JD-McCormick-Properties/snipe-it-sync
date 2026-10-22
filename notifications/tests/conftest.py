@@ -29,8 +29,8 @@ def checkout(entry_id: int, asset_id: int) -> dict:
         "id": entry_id,
         "action_type": "checkout",
         "item": {"id": asset_id, "name": f"asset-{asset_id}"},
-        "target": {"name": "Nick Brown"},
-        "admin": {"name": "Jill Weigen"},
+        "target": {"name": "Alex Rivera"},
+        "admin": {"name": "Casey Morgan"},
         "created_at": {"datetime": "2026-07-27 09:00:00",
                        "formatted": "July 27, 2026 9:00am"},
     }

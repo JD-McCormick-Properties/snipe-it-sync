@@ -26,18 +26,18 @@ from helpers.log_redaction import redact
     [
         ("  Resolving Google Photos album: https://photos.app.goo.gl/AbC123xyz",
          "photos.app.goo.gl"),
-        ("  Uploaded → https://jdmccormickllc-my.sharepoint.com/personal/savannah_jdmccormick_com/"
-         "Documents/AssetPhotos/Vehicle/GMC%20Canyon%202018/x.jpg", "savannah"),
+        ("  Uploaded → https://contoso-my.sharepoint.com/personal/owner_contoso_com/"
+         "Documents/AssetPhotos/Vehicle/GMC%20Canyon%202018/x.jpg", "owner_contoso"),
         ("  Skipping iCloud link (manual export only): https://share.icloud.com/photos/0aBc",
          "icloud"),
         ("cdn //lh3.googleusercontent.com/pw/AP1Gcz=s0", "googleusercontent"),
-        ("Notified ['jill@jdmccormick.com', 'jaylen@jdmccormick.com']", "jdmccormick.com"),
-        ("Asset 3 (1GTH6BEW2J1225596): 34 URL(s) (34 from history notes)", "1GTH6BEW2J1225596"),
+        ("Notified ['casey@example.com', 'alex@example.com']", "example.com"),
+        ("Asset 3 (1ABCD23EFGH456789): 34 URL(s) (34 from history notes)", "1ABCD23EFGH456789"),
         ("Created OneDrive folder /JD McCormick Shared Drive/AssetPhotos/Vehicle/GMC Canyon 2018/"
-         "Check Out - Nick Brown - 2026-10-22 10-47", "Nick Brown"),
-        ("  Using event subfolder: Check In - Dwayne Pickens - 2026-08-19 15-08", "Dwayne"),
-        ("    Chevrolet Silverado 2007 - Devin Krause - 2026-08-06 13-19-45.jpg  -> Check Out",
-         "Devin"),
+         "Check Out - Alex Rivera - 2026-10-22 10-47", "Alex Rivera"),
+        ("  Using event subfolder: Check In - Jordan Lee - 2026-08-19 15-08", "Jordan"),
+        ("    Chevrolet Silverado 2007 - Sam Ortiz - 2026-08-06 13-19-45.jpg  -> Check Out",
+         "Sam"),
     ],
 )
 def test_sensitive_detail_is_removed(line, leaked):
@@ -46,12 +46,12 @@ def test_sensitive_detail_is_removed(line, leaked):
 
 def test_redaction_keeps_the_line_readable():
     line = ("Created OneDrive folder /JD McCormick Shared Drive/AssetPhotos/Vehicle/"
-            "GMC Canyon 2018/Check Out - Nick Brown - 2026-10-22 10-47")
+            "GMC Canyon 2018/Check Out - Alex Rivera - 2026-10-22 10-47")
     assert redact(line) == (
         "Created OneDrive folder /JD McCormick Shared Drive/AssetPhotos/Vehicle/"
         "GMC Canyon 2018/Check Out - [person] - 2026-10-22 10-47"
     )
-    assert redact("Asset 3 (1GTH6BEW2J1225596): 5 URL(s)") == "Asset 3 ([VIN]): 5 URL(s)"
+    assert redact("Asset 3 (1ABCD23EFGH456789): 5 URL(s)") == "Asset 3 ([VIN]): 5 URL(s)"
 
 
 @pytest.mark.parametrize(
@@ -70,7 +70,7 @@ def test_ordinary_lines_are_untouched(line):
 
 def test_only_17_character_tokens_count_as_vins():
     # 16 and 18 characters, and a 17-character token containing I/O/Q
-    for token in ["1GTH6BEW2J122559", "1GTH6BEW2J12255961", "1GTH6BEW2J122559O"]:
+    for token in ["1ABCD23EFGH45678", "1ABCD23EFGH4567890", "1ABCD23EFGH45678O"]:
         assert redact(token) == token
 
 
@@ -114,9 +114,9 @@ def test_installed_formatter_redacts_messages_and_tracebacks(monkeypatch, root_s
     try:
         raise RuntimeError("GET https://photos.app.goo.gl/AbC123xyz failed")
     except RuntimeError:
-        log.exception("Upload failed for asset 1GTH6BEW2J1225596")
+        log.exception("Upload failed for asset 1ABCD23EFGH456789")
     out = root_stream.getvalue()
-    assert "goo.gl" not in out and "1GTH6BEW2J1225596" not in out
+    assert "goo.gl" not in out and "1ABCD23EFGH456789" not in out
     assert "WARNING | Could not resolve [link]" in out
     assert "Traceback" in out
 
@@ -137,7 +137,7 @@ class _FakeDrive:
         pass
 
     def iter_files(self, base):
-        return [{"path": f"{base}/Vehicle/GMC Canyon 2018/Check Out - Nick Brown - 2026-10-22 10-47/x.jpg"}]
+        return [{"path": f"{base}/Vehicle/GMC Canyon 2018/Check Out - Alex Rivera - 2026-10-22 10-47/x.jpg"}]
 
     def _headers(self, content_type=None):
         return {"Authorization": "Bearer test"}
@@ -181,11 +181,11 @@ def test_report_is_emailed_not_logged_in_actions(monkeypatch, caplog):
     assert len(sent) == 1
     url, payload = sent[0]
     assert url.endswith("/users/info@example.com/sendMail")
-    assert "Nick Brown" in payload["message"]["body"]["content"]
+    assert "Alex Rivera" in payload["message"]["body"]["content"]
     assert payload["message"]["toRecipients"] == [
         {"emailAddress": {"address": "maintainer@example.com"}}
     ]
-    assert "Nick Brown" not in caplog.text
+    assert "Alex Rivera" not in caplog.text
     assert "emailed to 1 recipient" in caplog.text
 
 
@@ -194,7 +194,7 @@ def test_report_prints_locally(monkeypatch, caplog):
     sent = _setup_report(monkeypatch, in_actions=False)
     assert usage_report.main() == 0
     assert sent == []
-    assert "Nick Brown" in caplog.text
+    assert "Alex Rivera" in caplog.text
 
 
 def test_report_fails_loudly_rather_than_logging_without_recipients(monkeypatch, caplog):
@@ -203,7 +203,7 @@ def test_report_fails_loudly_rather_than_logging_without_recipients(monkeypatch,
     monkeypatch.delenv("ALERT_TO_EMAILS")
     assert usage_report.main() == 1
     assert sent == []
-    assert "Nick Brown" not in caplog.text
+    assert "Alex Rivera" not in caplog.text
 
 
 def test_every_photo_script_gets_redaction_through_configure_logging(monkeypatch, root_stream):

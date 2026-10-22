@@ -11,18 +11,30 @@ change.
 ```
 property_sync/
 ├── sync_properties.py            # entry point
+├── fetch_data.py                 # downloads the AppFolio exports from OneDrive
 ├── cleanup_stutter_locations.py  # maintenance, see below
-├── data/
-│   ├── properties.csv            # AppFolio export
-│   └── unit_directory.csv        # AppFolio export
+├── data/                         # filled at run time; not committed
 └── tests/
 ```
 
-Both CSVs are read from `data/` relative to the script, so it runs from any
-working directory. Override with `PROPERTIES_CSV` / `UNIT_DIRECTORY_CSV`.
+## Where the AppFolio data lives
 
-Refreshing the data is a matter of replacing the two exports and committing;
-the next run picks them up.
+The two exports, `properties.csv` and `unit_directory.csv`, carry addresses,
+rents, deposits and revenue, and this repository is public, so they live in
+OneDrive rather than in git: by default
+`JD McCormick Shared Drive/AppFolio Exports` on the same drive as the photo
+sync (override with the `PROPERTY_DATA_FOLDER` variable).
+
+Before each sync, `fetch_data.py` downloads them into `data/` using the photo
+sync's app registration. To refresh the data, replace the two files in that
+OneDrive folder; the next run picks them up.
+
+`sync_properties.py` reads `data/` relative to the script, so it runs from any
+working directory. Override with `PROPERTIES_CSV` / `UNIT_DIRECTORY_CSV` to
+point a local run at other files.
+
+Under Actions the run log is public, so property and unit names print as
+`[redacted]`; a local run shows them.
 
 ## What it does
 
@@ -39,7 +51,7 @@ mattered: the sync reported the same 15 creations and 4 updates every day for
 weeks while writing nothing at all.
 
 **Comparisons unescape first.** Snipe-IT HTML-escapes on output, so
-`402 & 404 Genesee Street` returns as `402 &amp; 404 ...`. Comparing raw made
+`100 & 102 Example Street` returns as `100 &amp; 102 ...`. Comparing raw made
 every property containing `&` or an apostrophe look permanently out of date.
 
 **Location names are globally unique.** A unit named `122` can exist only once

@@ -6,7 +6,7 @@ checkout landed flat in the model folder with the event recorded in the
 filename instead. The sync now gives every check-in/out its own folder; this
 script files the loose photos that older versions left behind:
 
-  "Model - Nick Brown - 2026-07-17 09-01-45.jpg"
+  "Model - Alex Rivera - 2026-07-17 09-01-45.jpg"
       carries an uploader, so it came from an activity entry. Matched back to
       that entry by name and timestamp to recover whether it was a check-in
       or a check-out, then moved into the matching event subfolder.

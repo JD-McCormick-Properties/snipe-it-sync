@@ -49,7 +49,7 @@ def photo_b() -> Image.Image:
 def activity(
     entry_id: int,
     action: str = "checkout",
-    who: str = "Nick Brown",
+    who: str = "Alex Rivera",
     when: str = "2026-07-17 09:01:45",
 ) -> dict:
     """An activity-log entry shaped like Snipe-IT's API response."""

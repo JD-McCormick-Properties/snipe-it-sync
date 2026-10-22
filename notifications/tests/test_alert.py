@@ -56,7 +56,7 @@ def test_alert_never_falls_back_to_the_notifier_recipients(monkeypatch):
     NOTIFY_TO_EMAILS is set here and ALERT_TO_EMAILS is not; the alert must
     skip rather than borrow the notifier's recipient list.
     """
-    monkeypatch.setenv("NOTIFY_TO_EMAILS", "jill@example.com,office@example.com")
+    monkeypatch.setenv("NOTIFY_TO_EMAILS", "casey@example.com,office@example.com")
     monkeypatch.delenv("ALERT_TO_EMAILS", raising=False)
 
     sent = []
@@ -69,7 +69,7 @@ def test_alert_never_falls_back_to_the_notifier_recipients(monkeypatch):
 
 
 def test_alert_recipients_are_read_only_from_alert_to_emails(monkeypatch):
-    monkeypatch.setenv("NOTIFY_TO_EMAILS", "jill@example.com")
+    monkeypatch.setenv("NOTIFY_TO_EMAILS", "casey@example.com")
     monkeypatch.setenv("ALERT_TO_EMAILS", "maintainer@example.com")
 
     sent = []
@@ -79,7 +79,7 @@ def test_alert_recipients_are_read_only_from_alert_to_emails(monkeypatch):
     )
     assert main() == 0
     assert sent == [["maintainer@example.com"]]
-    assert "jill@example.com" not in sent[0]
+    assert "casey@example.com" not in sent[0]
 
 
 def test_alert_source_does_not_reference_the_notifier_recipient_list():

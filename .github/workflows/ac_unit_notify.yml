@@ -23,20 +23,21 @@ concurrency:
 #      Application permission: Mail.Send
 #    Then grant admin consent.
 #
-# 2. (Recommended) Restrict Mail.Send to info@jdmccormick.com only:
+# 2. (Recommended) Restrict Mail.Send to the sending mailbox only:
 #    Run in Exchange Online PowerShell:
 #      New-ApplicationAccessPolicy -AppId <AZURE_CLIENT_ID> \
-#        -PolicyScopeGroupId info@jdmccormick.com \
+#        -PolicyScopeGroupId <sending mailbox> \
 #        -AccessRight RestrictAccess \
-#        -Description "Limit mail send to info mailbox"
+#        -Description "Limit mail send to the sending mailbox"
 #
-# 3. GitHub secrets (same as photo sync — no new secrets needed):
-#    SNIPE_URL, SNIPE_API_KEY, AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
+# 3. GitHub secrets: the photo sync's SNIPE_URL, SNIPE_API_KEY,
+#    AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET, plus
+#    NOTIFY_FROM_EMAIL (the sending mailbox) and NOTIFY_TO_EMAILS
+#    (comma-separated recipients). Addresses are secrets, not variables,
+#    because Actions prints variable values in the public run log.
 #
-# 4. GitHub variables to set:
-#    NOTIFY_FROM_EMAIL  = info@jdmccormick.com
-#    NOTIFY_TO_EMAILS   = jill@jdmccormick.com,jaylen@jdmccormick.com
-#    NOTIFY_CATEGORY    = AC Units   (optional — this is the default)
+# 4. GitHub variable (optional):
+#    NOTIFY_CATEGORY = AC Units   (this is the default)
 
 jobs:
   notify:
@@ -71,7 +72,7 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          NOTIFY_FROM_EMAIL: ${{ vars.NOTIFY_FROM_EMAIL }}
+          NOTIFY_FROM_EMAIL: ${{ secrets.NOTIFY_FROM_EMAIL }}
           # A secret, not a variable: Actions prints variable values in the
           # public run log, and masks secrets.
           NOTIFY_TO_EMAILS: ${{ secrets.NOTIFY_TO_EMAILS }}

@@ -12,10 +12,10 @@ Photos are filed in OneDrive by category, model, and event:
 {ONEDRIVE_BASE_FOLDER}/
 └── Vehicle/
     └── Chevrolet Silverado 2007/
-        ├── Check Out - Nick Brown - 2026-07-17 09-01/
+        ├── Check Out - Alex Rivera - 2026-07-17 09-01/
         │   ├── Chevrolet Silverado 2007 - 1.jpg
         │   └── Chevrolet Silverado 2007 - 2.jpg
-        ├── Check In - Nick Brown - 2026-07-18 16-30/
+        ├── Check In - Alex Rivera - 2026-07-18 16-30/
         │   └── Chevrolet Silverado 2007 - 1.jpg
         └── File Upload/
             └── Chevrolet Silverado 2007 - 2026-07-28 14-30-00.jpg

@@ -92,7 +92,7 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          NOTIFY_FROM_EMAIL: ${{ vars.NOTIFY_FROM_EMAIL }}
+          NOTIFY_FROM_EMAIL: ${{ secrets.NOTIFY_FROM_EMAIL }}
           # A secret, not a variable: Actions prints variable values in the
           # public run log, and masks secrets.
           ALERT_TO_EMAILS: ${{ secrets.ALERT_TO_EMAILS }}

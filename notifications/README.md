@@ -16,12 +16,12 @@ permission with admin consent.
 
 | Setting | Kind | Default | Purpose |
 | --- | --- | --- | --- |
-| `NOTIFY_FROM_EMAIL` | variable | — | Sending mailbox |
+| `NOTIFY_FROM_EMAIL` | secret | — | Sending mailbox |
 | `NOTIFY_TO_EMAILS` | secret | — | Comma-separated recipients |
 | `NOTIFY_CATEGORY` | variable | `AC Units` | Snipe-IT category to watch |
 | `NOTIFY_STATE_PATH` | set by the workflow | `ac_notify_state.json` | Where already-notified checkouts are recorded |
 
-The recipient list is a secret rather than a variable because Actions prints
+The addresses are secrets rather than variables because Actions prints
 variable values in the run log, which is public on this repository; secrets
 are masked. For the same reason the log reports how many people were
 notified, never their addresses.
@@ -30,7 +30,7 @@ Restricting the app to a single mailbox is worth doing:
 
 ```powershell
 New-ApplicationAccessPolicy -AppId <AZURE_CLIENT_ID> `
-  -PolicyScopeGroupId info@jdmccormick.com `
+  -PolicyScopeGroupId <sending mailbox> `
   -AccessRight RestrictAccess
 ```
 

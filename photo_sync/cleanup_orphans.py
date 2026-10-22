@@ -63,7 +63,7 @@ PERCEPTUAL_MAX_DISTANCE = 20
 # Filenames the sync itself produces. Anything else is presumed human-created
 # and is never a deletion candidate.
 #   "Model - 2026-07-02 06-03-58.jpg"
-#   "Model - Nick Brown - 2026-07-02 06-03-58.jpg"
+#   "Model - Alex Rivera - 2026-07-02 06-03-58.jpg"
 #   "Model - 3.jpg"            (inside an event subfolder)
 SYNC_NAME_RE = re.compile(
     r"^.+ - (?:\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}|\d+)\.[A-Za-z0-9]+$"

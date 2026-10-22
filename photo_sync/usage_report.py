@@ -44,7 +44,7 @@ from sync import _configure_logging, _extract_entry_date, _extract_uploader_name
 
 log = logging.getLogger("usage_report")
 
-# "Check Out - Nick Brown - 2026-08-10 08-38"
+# "Check Out - Alex Rivera - 2026-08-10 08-38"
 EVENT_FOLDER_RE = re.compile(
     r"^(?P<action>Check Out|Check In|Update|Added|Photos)"
     r"(?: - (?P<person>.+?))?"

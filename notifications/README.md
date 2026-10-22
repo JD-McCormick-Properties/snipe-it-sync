@@ -21,6 +21,7 @@ Repository variables:
 | `NOTIFY_FROM_EMAIL` | — | Sending mailbox |
 | `NOTIFY_TO_EMAILS` | — | Comma-separated recipients |
 | `NOTIFY_CATEGORY` | `AC Units` | Snipe-IT category to watch |
+| `NOTIFY_STATE_PATH` | `ac_notify_state.json` | Where already-notified checkouts are recorded (set by the workflow) |
 
 Restricting the app to a single mailbox is worth doing:
 

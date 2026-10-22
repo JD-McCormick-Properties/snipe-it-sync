@@ -14,14 +14,17 @@ permission with admin consent.
 
 ## Configuration
 
-Repository variables:
+| Setting | Kind | Default | Purpose |
+| --- | --- | --- | --- |
+| `NOTIFY_FROM_EMAIL` | variable | — | Sending mailbox |
+| `NOTIFY_TO_EMAILS` | secret | — | Comma-separated recipients |
+| `NOTIFY_CATEGORY` | variable | `AC Units` | Snipe-IT category to watch |
+| `NOTIFY_STATE_PATH` | set by the workflow | `ac_notify_state.json` | Where already-notified checkouts are recorded |
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `NOTIFY_FROM_EMAIL` | — | Sending mailbox |
-| `NOTIFY_TO_EMAILS` | — | Comma-separated recipients |
-| `NOTIFY_CATEGORY` | `AC Units` | Snipe-IT category to watch |
-| `NOTIFY_STATE_PATH` | `ac_notify_state.json` | Where already-notified checkouts are recorded (set by the workflow) |
+The recipient list is a secret rather than a variable because Actions prints
+variable values in the run log, which is public on this repository; secrets
+are masked. For the same reason the log reports how many people were
+notified, never their addresses.
 
 Restricting the app to a single mailbox is worth doing:
 
@@ -61,7 +64,7 @@ Actions runs. Three properties matter, each covered by tests:
 `.github/workflows/alert_on_failure.yml` on a `workflow_run` completion. It
 reuses the Graph sender above.
 
-Recipients come from `ALERT_TO_EMAILS`, deliberately separate from
+Recipients come from the `ALERT_TO_EMAILS` secret, deliberately separate from
 `NOTIFY_TO_EMAILS`. Unset, the alert is skipped rather than mailed to the AC
 unit recipients.
 

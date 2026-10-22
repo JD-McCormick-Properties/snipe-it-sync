@@ -85,7 +85,8 @@ def main() -> int:
         log.exception("Could not send the failure alert")
         return 1
 
-    log.info("Alerted %s: %s", recipients, subject)
+    # Count, not addresses: run logs are public on this repository.
+    log.info("Alerted %d recipient(s): %s", len(recipients), subject)
     return 0
 
 

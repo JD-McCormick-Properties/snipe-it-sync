@@ -156,6 +156,7 @@ All set in `.env` (and overridable via the GitHub Actions workflow vars):
 | `INCLUDE_HISTORY_NOTES` | `true` | Also read links from check-in/check-out notes, not just the asset's own notes |
 | `USE_PLAYWRIGHT` | `true` | Render Google Photos albums in headless Chromium; `false` skips them |
 | `LOG_LEVEL` | `INFO` | `DEBUG` to see per-URL details |
+| `REDACT_LOGS` | on under Actions, off locally | Replace links, emails, VINs and people's names in log output; the repo's run logs are public |
 
 CLI flags on `sync.py`:
 
@@ -286,7 +287,7 @@ OneDrive recycle bin, unless `--keep-redundant` is given.
 
 ### `usage_report.py` — who attaches photos, and how
 
-Read-only. Prints two tables:
+Read-only. Two tables:
 
 - **OneDrive**: photos, events and vehicles per person, and when each last
   added one, read from the event folder names.
@@ -295,8 +296,9 @@ Read-only. Prints two tables:
   a share link. A link event can be a whole album, so it isn't comparable to
   an upload count.
 
-The workflow log is public on a public repository, so treat this report's
-output as visible to anyone.
+Run locally it prints them. Under Actions the run log is public, so the
+report is emailed to `ALERT_TO_EMAILS` (from `NOTIFY_FROM_EMAIL`, through the
+same app registration's `Mail.Send`) and the log says only that it was sent.
 
 ## Tests
 

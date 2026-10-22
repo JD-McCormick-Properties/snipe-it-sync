@@ -22,11 +22,22 @@ jobs:
         working-directory: property_sync
         run: pip install -r requirements.txt
 
+      # The AppFolio exports hold rents and revenue, so they live in OneDrive
+      # rather than in this public repository. See property_sync/fetch_data.py.
+      - name: Fetch AppFolio exports from OneDrive
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
+          ONEDRIVE_DRIVE_ID: ${{ secrets.ONEDRIVE_DRIVE_ID }}
+          PROPERTY_DATA_FOLDER: ${{ vars.PROPERTY_DATA_FOLDER || 'JD McCormick Shared Drive/AppFolio Exports' }}
+        working-directory: property_sync
+        run: python fetch_data.py
+
       - name: Run sync
         env:
           SNIPE_URL: ${{ secrets.SNIPE_URL }}
           SNIPE_API_KEY: ${{ secrets.SNIPE_API_KEY }}
-          APPFOLIO_BASE_URL: ${{ secrets.APPFOLIO_BASE_URL }}
-          APPFOLIO_SESSION: ${{ secrets.APPFOLIO_SESSION }}
         working-directory: property_sync
         run: python sync_properties.py

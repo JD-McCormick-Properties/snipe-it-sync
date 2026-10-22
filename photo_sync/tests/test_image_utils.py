@@ -105,8 +105,8 @@ def test_parse_dt_falls_back_to_now_for_junk():
 # Filenames
 # --------------------------------------------------------------------- #
 def test_build_filename_includes_uploader_and_stamp():
-    assert build_filename("Silverado 2007", "Nick Brown", "2026-07-17 09:01:45", "jpg") == (
-        "Silverado 2007 - Nick Brown - 2026-07-17 09-01-45.jpg"
+    assert build_filename("Silverado 2007", "Alex Rivera", "2026-07-17 09:01:45", "jpg") == (
+        "Silverado 2007 - Alex Rivera - 2026-07-17 09-01-45.jpg"
     )
 
 
@@ -118,7 +118,7 @@ def test_build_filename_omits_empty_uploader():
 
 def test_build_filename_is_stable_for_the_same_event():
     """Two runs processing one event must produce identical filenames."""
-    args = ("Silverado 2007", "Nick Brown", "2026-07-17 09:01:45", "jpg")
+    args = ("Silverado 2007", "Alex Rivera", "2026-07-17 09:01:45", "jpg")
     assert build_filename(*args) == build_filename(*args)
 
 

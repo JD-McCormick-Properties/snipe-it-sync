@@ -289,7 +289,7 @@ def plan_units(units, parent_name, prop_subs, all_names):
 def fields_differing(existing, want):
     """Field names whose stored value differs from what we intend to write.
 
-    Snipe-IT HTML-escapes text on output, so "402 & 404 Genesee Street" comes
+    Snipe-IT HTML-escapes text on output, so "100 & 102 Example Street" comes
     back as "402 &amp; 404 ...". Comparing raw made every property containing
     & or an apostrophe look permanently stale and rewritten on every run.
     """

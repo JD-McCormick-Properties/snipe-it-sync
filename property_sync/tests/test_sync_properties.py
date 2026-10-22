@@ -45,14 +45,14 @@ def test_empty_body_is_not_an_error():
 # --------------------------------------------------------------------- #
 # Change detection
 #
-# Snipe-IT HTML-escapes on output, so "402 & 404 Genesee Street" comes back
+# Snipe-IT HTML-escapes on output, so "100 & 102 Example Street" comes back
 # as "402 &amp; 404 ...". Comparing raw made every property containing & or
 # an apostrophe look permanently stale, and it was rewritten every run.
 # --------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "stored,intended",
     [
-        ("402 &amp; 404 Genesee Street", "402 & 404 Genesee Street"),
+        ("100 &amp; 102 Example Street", "100 & 102 Example Street"),
         ("Joe&#039;s Soley Owned Parent LLC", "Joe's Soley Owned Parent LLC"),
         ("Smith &amp; Sons&#039; Place", "Smith & Sons' Place"),
         ("plain text", "plain text"),
@@ -236,8 +236,8 @@ def test_main_exits_non_zero_when_a_write_was_rejected():
     "env,shown",
     [
         ({"GITHUB_ACTIONS": "true"}, "[redacted]"),
-        ({}, "402 & 404 Genesee Street"),
-        ({"GITHUB_ACTIONS": "true", "REDACT_LOGS": "false"}, "402 & 404 Genesee Street"),
+        ({}, "100 & 102 Example Street"),
+        ({"GITHUB_ACTIONS": "true", "REDACT_LOGS": "false"}, "100 & 102 Example Street"),
         ({"REDACT_LOGS": "true"}, "[redacted]"),
     ],
 )
@@ -246,7 +246,7 @@ def test_names_are_hidden_in_actions(monkeypatch, env, shown):
     monkeypatch.delenv("REDACT_LOGS", raising=False)
     for k, v in env.items():
         monkeypatch.setenv(k, v)
-    assert sp._shown("402 & 404 Genesee Street") == shown
+    assert sp._shown("100 & 102 Example Street") == shown
 
 
 def test_a_skipped_row_never_prints_its_contents(monkeypatch, tmp_path, capsys):

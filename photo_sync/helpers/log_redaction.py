@@ -24,8 +24,8 @@ _PATTERNS: List[Tuple[re.Pattern, str]] = [
     # Vehicle asset tags are VINs: 17 characters, never I, O or Q.
     (re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b"), "[VIN]"),
     # The person in sync-generated names, which always put a date after them:
-    #   "Check Out - Nick Brown - 2026-07-17 09-01"
-    #   "Chevrolet Silverado 2007 - Nick Brown - 2026-07-17 09-01-45.jpg"
+    #   "Check Out - Alex Rivera - 2026-07-17 09-01"
+    #   "Chevrolet Silverado 2007 - Alex Rivera - 2026-07-17 09-01-45.jpg"
     # Stops at "/" so in a path only the last segment is considered.
     (re.compile(r" - [^/\n|]+? - (?=\d{4}-\d{2}-\d{2})"), " - [person] - "),
 ]

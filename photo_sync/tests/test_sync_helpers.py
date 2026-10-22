@@ -99,13 +99,13 @@ def test_action_label(action, label):
 
 
 def test_event_subfolder_name_shape():
-    assert _event_subfolder_name("checkout", "Nick Brown", "2026-07-17 09:01:45") == (
-        "Check Out - Nick Brown - 2026-07-17 09-01"
+    assert _event_subfolder_name("checkout", "Alex Rivera", "2026-07-17 09:01:45") == (
+        "Check Out - Alex Rivera - 2026-07-17 09-01"
     )
 
 
 def test_event_subfolder_name_is_stable_across_runs():
-    args = ("checkout", "Nick Brown", "2026-07-17 09:01:45")
+    args = ("checkout", "Alex Rivera", "2026-07-17 09:01:45")
     assert _event_subfolder_name(*args) == _event_subfolder_name(*args)
 
 
@@ -138,9 +138,9 @@ def test_entry_date_missing_returns_empty():
 @pytest.mark.parametrize(
     "entry,expected",
     [
-        ({"admin": {"name": "Nick Brown"}}, "Nick Brown"),
-        ({"created_by": {"first_name": "Devin", "last_name": "Krause"}}, "Devin Krause"),
-        ({"user": {"username": "dpickens"}}, "dpickens"),
+        ({"admin": {"name": "Alex Rivera"}}, "Alex Rivera"),
+        ({"created_by": {"first_name": "Sam", "last_name": "Ortiz"}}, "Sam Ortiz"),
+        ({"user": {"username": "jlee"}}, "jlee"),
         ({"admin": "Plain String"}, "Plain String"),
         ({}, ""),
     ],
@@ -269,13 +269,13 @@ BASE = "AssetPhotos/Vehicle/Chevrolet Silverado 2025"
 
 def test_upload_tied_to_a_checkout_goes_to_that_event_folder():
     assert _native_upload_folder(BASE, activity(1, action="checkout")) == (
-        f"{BASE}/Check Out - Nick Brown - 2026-07-17 09-01"
+        f"{BASE}/Check Out - Alex Rivera - 2026-07-17 09-01"
     )
 
 
 def test_upload_tied_to_a_checkin_goes_to_that_event_folder():
     assert _native_upload_folder(BASE, activity(1, action="checkin from")) == (
-        f"{BASE}/Check In - Nick Brown - 2026-07-17 09-01"
+        f"{BASE}/Check In - Alex Rivera - 2026-07-17 09-01"
     )
 
 
@@ -306,7 +306,7 @@ OLD_DATE = "2026-01-05 09:00:00"
 
 
 def _batch(source="activity", date=OLD_DATE):
-    return _UrlBatch(urls=[ALBUM], uploader="Nick Brown", date=date,
+    return _UrlBatch(urls=[ALBUM], uploader="Alex Rivera", date=date,
                      action_type="checkout", source=source)
 
 

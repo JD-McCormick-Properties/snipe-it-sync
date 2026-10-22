@@ -233,7 +233,7 @@ def test_subject_names_the_asset_and_model():
 
 def test_body_carries_the_asset_details_and_people():
     _, body = n.build_email(ASSET, checkout(1, 7), [], "https://snipe.invalid")
-    for expected in ("AC-0042", "CCF12B10A", "Friedrich", "Nick Brown", "Jill Weigen"):
+    for expected in ("AC-0042", "CCF12B10A", "Friedrich", "Alex Rivera", "Casey Morgan"):
         assert expected in body
 
 
@@ -286,9 +286,9 @@ def test_action_labels(action, label):
 @pytest.mark.parametrize(
     "entry,expected",
     [
-        ({"admin": {"name": "Nick Brown"}}, "Nick Brown"),
-        ({"admin": {"first_name": "Devin", "last_name": "Krause"}}, "Devin Krause"),
-        ({"admin": {"username": "dpickens"}}, "dpickens"),
+        ({"admin": {"name": "Alex Rivera"}}, "Alex Rivera"),
+        ({"admin": {"first_name": "Sam", "last_name": "Ortiz"}}, "Sam Ortiz"),
+        ({"admin": {"username": "jlee"}}, "jlee"),
         ({"admin": "Plain String"}, "Plain String"),
         ({}, ""),
     ],

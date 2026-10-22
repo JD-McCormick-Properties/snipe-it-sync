@@ -22,6 +22,8 @@ import sys
 
 import requests
 
+from sync_properties import _shown
+
 SNIPE_URL = os.environ["SNIPE_URL"].strip().rstrip("/")
 API_KEY = os.environ["SNIPE_API_KEY"].strip()
 HEADERS = {
@@ -91,7 +93,7 @@ def main() -> int:
             targets.append(loc)
 
     for loc, busy in unsafe:
-        print(f"  SKIP (in use)  {loc['name']}  [{', '.join(busy)}]")
+        print(f"  SKIP (in use)  {_shown(loc['name'])}  [{', '.join(busy)}]")
 
     if not targets:
         print("Nothing to remove.")
@@ -99,7 +101,7 @@ def main() -> int:
 
     print(f"{len(targets)} redundant sublocation(s):")
     for loc in targets:
-        print(f"  id={loc['id']:<6} {html.unescape(loc['name'])}")
+        print(f"  id={loc['id']:<6} {_shown(html.unescape(loc['name']))}")
 
     if not args.delete:
         print("\nDry run — nothing deleted. Re-run with --delete.")
@@ -116,7 +118,7 @@ def main() -> int:
         if r.status_code >= 400 or payload.get("status") == "error":
             print(f"  failed id={loc['id']}: {payload.get('messages') or r.status_code}")
             continue
-        print(f"  deleted id={loc['id']} {html.unescape(loc['name'])}")
+        print(f"  deleted id={loc['id']} {_shown(html.unescape(loc['name']))}")
         removed += 1
 
     print(f"\nDeleted {removed} of {len(targets)}.")

@@ -223,3 +223,39 @@ def test_main_exits_non_zero_when_a_write_was_rejected():
     src = inspect.getsource(sp.main)
     assert "return 1" in src
     assert "unit_failures" in src, "unit failures must count toward the exit status"
+
+
+# --------------------------------------------------------------------- #
+# Public run logs
+#
+# Actions logs are public on this repository, and the AppFolio data (property
+# names, addresses, units, and whole rows including rents) must not appear in
+# them. Local runs keep the names.
+# --------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "env,shown",
+    [
+        ({"GITHUB_ACTIONS": "true"}, "[redacted]"),
+        ({}, "402 & 404 Genesee Street"),
+        ({"GITHUB_ACTIONS": "true", "REDACT_LOGS": "false"}, "402 & 404 Genesee Street"),
+        ({"REDACT_LOGS": "true"}, "[redacted]"),
+    ],
+)
+def test_names_are_hidden_in_actions(monkeypatch, env, shown):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("REDACT_LOGS", raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    assert sp._shown("402 & 404 Genesee Street") == shown
+
+
+def test_a_skipped_row_never_prints_its_contents(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("REDACT_LOGS", "true")
+    csv_file = tmp_path / "props.csv"
+    csv_file.write_text("Property,Market Rent,Property ID\nSecret Street,1450,\n")
+    monkeypatch.setattr(sp, "PROPERTIES_CSV", str(csv_file))
+    monkeypatch.setattr(sp, "UNIT_DIRECTORY_CSV", str(tmp_path / "missing.csv"))
+    monkeypatch.setattr(sp, "get_json", lambda path, **params: {"rows": [], "total": 0})
+    sp.main()
+    out = capsys.readouterr().out
+    assert "Secret Street" not in out and "1450" not in out

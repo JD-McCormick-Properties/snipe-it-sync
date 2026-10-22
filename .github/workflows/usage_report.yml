@@ -30,7 +30,7 @@ jobs:
           ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
           ONEDRIVE_DRIVE_ID: ${{ secrets.ONEDRIVE_DRIVE_ID }}
           ONEDRIVE_BASE_FOLDER: ${{ vars.ONEDRIVE_BASE_FOLDER || 'AssetPhotos' }}
-          NOTIFY_FROM_EMAIL: ${{ vars.NOTIFY_FROM_EMAIL }}
+          NOTIFY_FROM_EMAIL: ${{ secrets.NOTIFY_FROM_EMAIL }}
           ALERT_TO_EMAILS: ${{ secrets.ALERT_TO_EMAILS }}
           LOG_LEVEL: INFO
         run: python usage_report.py

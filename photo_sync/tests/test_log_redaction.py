@@ -27,12 +27,12 @@ from helpers.log_redaction import redact
         ("  Resolving Google Photos album: https://photos.app.goo.gl/AbC123xyz",
          "photos.app.goo.gl"),
         ("  Uploaded → https://contoso-my.sharepoint.com/personal/owner_contoso_com/"
-         "Documents/AssetPhotos/Vehicle/GMC%20Canyon%202018/x.jpg", "owner"),
+         "Documents/AssetPhotos/Vehicle/GMC%20Canyon%202018/x.jpg", "owner_contoso"),
         ("  Skipping iCloud link (manual export only): https://share.icloud.com/photos/0aBc",
          "icloud"),
         ("cdn //lh3.googleusercontent.com/pw/AP1Gcz=s0", "googleusercontent"),
-        ("Notified ['casey@example.com', 'alex@example.com']", "jdmccormick.com"),
-        ("Asset 3 (1ABCD23EFGH456796): 34 URL(s) (34 from history notes)", "1ABCD23EFGH456796"),
+        ("Notified ['casey@example.com', 'alex@example.com']", "example.com"),
+        ("Asset 3 (1ABCD23EFGH456789): 34 URL(s) (34 from history notes)", "1ABCD23EFGH456789"),
         ("Created OneDrive folder /JD McCormick Shared Drive/AssetPhotos/Vehicle/GMC Canyon 2018/"
          "Check Out - Alex Rivera - 2026-10-22 10-47", "Alex Rivera"),
         ("  Using event subfolder: Check In - Jordan Lee - 2026-08-19 15-08", "Jordan"),
@@ -51,7 +51,7 @@ def test_redaction_keeps_the_line_readable():
         "Created OneDrive folder /JD McCormick Shared Drive/AssetPhotos/Vehicle/"
         "GMC Canyon 2018/Check Out - [person] - 2026-10-22 10-47"
     )
-    assert redact("Asset 3 (1ABCD23EFGH456796): 5 URL(s)") == "Asset 3 ([VIN]): 5 URL(s)"
+    assert redact("Asset 3 (1ABCD23EFGH456789): 5 URL(s)") == "Asset 3 ([VIN]): 5 URL(s)"
 
 
 @pytest.mark.parametrize(
@@ -70,7 +70,7 @@ def test_ordinary_lines_are_untouched(line):
 
 def test_only_17_character_tokens_count_as_vins():
     # 16 and 18 characters, and a 17-character token containing I/O/Q
-    for token in ["1ABCD23EFGH45679", "1ABCD23EFGH4567961", "1ABCD23EFGH45679O"]:
+    for token in ["1ABCD23EFGH45678", "1ABCD23EFGH4567890", "1ABCD23EFGH45678O"]:
         assert redact(token) == token
 
 
@@ -114,9 +114,9 @@ def test_installed_formatter_redacts_messages_and_tracebacks(monkeypatch, root_s
     try:
         raise RuntimeError("GET https://photos.app.goo.gl/AbC123xyz failed")
     except RuntimeError:
-        log.exception("Upload failed for asset 1ABCD23EFGH456796")
+        log.exception("Upload failed for asset 1ABCD23EFGH456789")
     out = root_stream.getvalue()
-    assert "goo.gl" not in out and "1ABCD23EFGH456796" not in out
+    assert "goo.gl" not in out and "1ABCD23EFGH456789" not in out
     assert "WARNING | Could not resolve [link]" in out
     assert "Traceback" in out
 

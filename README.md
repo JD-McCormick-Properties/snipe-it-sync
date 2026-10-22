@@ -19,8 +19,8 @@ shared between them except credentials (see below).
 ```
 ├── property_sync/
 │   ├── sync_properties.py            # entry point
+│   ├── fetch_data.py                 # AppFolio exports from OneDrive
 │   ├── cleanup_stutter_locations.py  # maintenance
-│   ├── data/                         # AppFolio exports (properties, units)
 │   └── tests/
 ├── photo_sync/
 │   ├── sync.py                       # entry point
@@ -127,14 +127,14 @@ Set as repository secrets. All three jobs use the same Snipe-IT token.
 | Secret | Used by |
 | --- | --- |
 | `SNIPE_URL`, `SNIPE_API_KEY` | all |
-| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | photo sync, notifier |
-| `ONEDRIVE_USER_ID` or `ONEDRIVE_DRIVE_ID` | photo sync |
-| `NOTIFY_TO_EMAILS` | notifier |
+| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | all three |
+| `ONEDRIVE_USER_ID` or `ONEDRIVE_DRIVE_ID` | photo sync, property sync (AppFolio exports) |
+| `NOTIFY_FROM_EMAIL`, `NOTIFY_TO_EMAILS` | notifier |
 | `ALERT_TO_EMAILS` | failure alert, usage report |
 
-Repository variables: `ONEDRIVE_BASE_FOLDER`, `NOTIFY_FROM_EMAIL`,
-`NOTIFY_CATEGORY`. Anything naming a person is a secret rather than a
-variable: Actions prints variable values in the run log and masks secrets.
+Repository variables: `ONEDRIVE_BASE_FOLDER`, `NOTIFY_CATEGORY`,
+`PROPERTY_DATA_FOLDER`. Email addresses are secrets rather than variables:
+Actions prints variable values in the run log and masks secrets.
 
 `ALERT_TO_EMAILS` receives workflow failure alerts and is separate from
 `NOTIFY_TO_EMAILS` on purpose — an AC unit checkout goes to the office, a sync

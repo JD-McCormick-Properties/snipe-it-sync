@@ -6,7 +6,7 @@ name: Alert On Failure
 # so this covers the silent-failure case too: a run that reports success while
 # writing nothing now fails, and fails loudly.
 #
-# Set the ALERT_TO_EMAILS repository variable to whoever maintains this repo.
+# Set the ALERT_TO_EMAILS repository secret to whoever maintains this repo.
 # It is deliberately separate from NOTIFY_TO_EMAILS — an AC unit checkout goes
 # to the office, a sync failure does not. Unset, the alert is skipped.
 on:
@@ -93,7 +93,9 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           NOTIFY_FROM_EMAIL: ${{ vars.NOTIFY_FROM_EMAIL }}
-          ALERT_TO_EMAILS: ${{ vars.ALERT_TO_EMAILS }}
+          # A secret, not a variable: Actions prints variable values in the
+          # public run log, and masks secrets.
+          ALERT_TO_EMAILS: ${{ secrets.ALERT_TO_EMAILS }}
           ALERT_WORKFLOW: ${{ github.event.workflow_run.name || 'Manual alert test' }}
           ALERT_CONCLUSION: ${{ steps.decide.outputs.conclusion }}
           ALERT_RUN_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}

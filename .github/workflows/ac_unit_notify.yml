@@ -72,7 +72,9 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           NOTIFY_FROM_EMAIL: ${{ vars.NOTIFY_FROM_EMAIL }}
-          NOTIFY_TO_EMAILS: ${{ vars.NOTIFY_TO_EMAILS }}
+          # A secret, not a variable: Actions prints variable values in the
+          # public run log, and masks secrets.
+          NOTIFY_TO_EMAILS: ${{ secrets.NOTIFY_TO_EMAILS }}
           NOTIFY_CATEGORY: ${{ vars.NOTIFY_CATEGORY || 'AC Units' }}
           NOTIFY_STATE_PATH: ac_notify_state.json
         run: python notifications/notifier.py

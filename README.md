@@ -104,6 +104,22 @@ Secret scanning with push protection is enabled, so a commit containing a
 credential is blocked before it reaches this public repo. Merged pull-request
 branches are deleted automatically.
 
+## Public run logs
+
+On a public repository anyone can read the Actions run logs and download run
+artifacts, so the jobs are written for that:
+
+- Under Actions, photo-sync logs pass through a redacting formatter that
+  replaces links, email addresses, VINs and the person in event and file
+  names (`photo_sync/helpers/log_redaction.py`). The property sync prints
+  property and unit names as `[redacted]`. Local runs keep full detail;
+  `REDACT_LOGS=true|false` overrides either way.
+- The usage report is a per-person table, so under Actions it is emailed to
+  `ALERT_TO_EMAILS` instead of printed.
+- No workflow uploads artifacts. The photo sync's dedupe DB persists through
+  the Actions cache, which is not publicly downloadable.
+- Recipient lists are secrets, so the run log shows them masked.
+
 ## Credentials
 
 Set as repository secrets. All three jobs use the same Snipe-IT token.
@@ -113,9 +129,12 @@ Set as repository secrets. All three jobs use the same Snipe-IT token.
 | `SNIPE_URL`, `SNIPE_API_KEY` | all |
 | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | photo sync, notifier |
 | `ONEDRIVE_USER_ID` or `ONEDRIVE_DRIVE_ID` | photo sync |
+| `NOTIFY_TO_EMAILS` | notifier |
+| `ALERT_TO_EMAILS` | failure alert, usage report |
 
 Repository variables: `ONEDRIVE_BASE_FOLDER`, `NOTIFY_FROM_EMAIL`,
-`NOTIFY_TO_EMAILS`, `NOTIFY_CATEGORY`, `ALERT_TO_EMAILS`.
+`NOTIFY_CATEGORY`. Anything naming a person is a secret rather than a
+variable: Actions prints variable values in the run log and masks secrets.
 
 `ALERT_TO_EMAILS` receives workflow failure alerts and is separate from
 `NOTIFY_TO_EMAILS` on purpose — an AC unit checkout goes to the office, a sync

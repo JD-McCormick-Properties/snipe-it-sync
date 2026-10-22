@@ -464,7 +464,8 @@ def main() -> int:
         history = snipe.get_asset_history(asset_id)
         subject, body = build_email(asset, entry, history, cfg.snipe_url)
         mailer.send(cfg.notify_to, subject, body)
-        log.info("Notified %s — asset %s", cfg.notify_to, asset.get("asset_tag"))
+        # Count, not addresses: run logs are public on this repository.
+        log.info("Notified %d recipient(s) — asset %s", len(cfg.notify_to), asset.get("asset_tag"))
 
     try:
         notified, failed = process_checkouts(checkouts, ac_asset_ids, state, send)

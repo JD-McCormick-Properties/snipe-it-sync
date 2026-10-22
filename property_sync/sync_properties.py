@@ -27,6 +27,25 @@ UNIT_DIRECTORY_CSV = os.environ.get("UNIT_DIRECTORY_CSV") or str(
 TIMEOUT = 30
 
 
+def _redacting() -> bool:
+    """Whether names must stay out of the output: the Actions run log is public.
+
+    ``REDACT_LOGS=true|false`` overrides; otherwise on under GitHub Actions and
+    off locally, so a local run still shows which property a line is about.
+    """
+    override = os.environ.get("REDACT_LOGS", "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    return os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+
+
+def _shown(text) -> str:
+    """A property or unit name as it may appear in the log."""
+    return "[redacted]" if _redacting() else str(text)
+
+
 class SnipeError(RuntimeError):
     """A write Snipe-IT rejected."""
 
@@ -115,9 +134,9 @@ def create_location(row):
     try:
         check(r)
     except SnipeError as exc:
-        print(f"❌ Create failed: {payload['name']} — {exc}")
+        print(f"❌ Create failed: {_shown(payload['name'])} — {exc}")
         return False
-    print(f"✅ Created: {payload['name']}")
+    print(f"✅ Created: {_shown(payload['name'])}")
     return True
 
 
@@ -138,10 +157,10 @@ def update_location(existing, row):
     )
 
     if not differing:
-        print(f"⏭️ No change: {name}")
+        print(f"⏭️ No change: {_shown(name)}")
         return False
 
-    print(f"   {name}: differs on {', '.join(differing)}")
+    print(f"   {_shown(name)}: differs on {', '.join(differing)}")
 
     payload = {
         "name": name,
@@ -163,9 +182,9 @@ def update_location(existing, row):
     try:
         check(r)
     except SnipeError as exc:
-        print(f"❌ Update failed: {name} — {exc}")
+        print(f"❌ Update failed: {_shown(name)} — {exc}")
         return None
-    print(f"🔄 Updated: {name}")
+    print(f"🔄 Updated: {_shown(name)}")
     return True
 
 
@@ -289,9 +308,9 @@ def create_sublocation(name, parent_id):
     try:
         check(r)
     except SnipeError as exc:
-        print(f"  ❌ Create failed: {name} — {exc}")
+        print(f"  ❌ Create failed: {_shown(name)} — {exc}")
         return False
-    print(f"  ✅ Created: {name}")
+    print(f"  ✅ Created: {_shown(name)}")
     return True
 
 
@@ -346,13 +365,13 @@ def sync_units(all_locs=None):
         # Match property full name to a Property ID.
         prop_id_str = prop_id_map.get(prop_full) or norm_prop_id_map.get(_normalize(prop_full))
         if not prop_id_str:
-            print(f"⚠️  No Property ID match for: {prop_full}")
+            print(f"⚠️  No Property ID match for: {_shown(prop_full)}")
             unmatched += 1
             continue
 
         parent_snipeit_id = snipeit_id_by_prop.get(prop_id_str)
         if not parent_snipeit_id:
-            print(f"⚠️  Not in Snipe-IT yet: {prop_full} (Property ID: {prop_id_str})")
+            print(f"⚠️  Not in Snipe-IT yet: {_shown(prop_full)} (Property ID: {prop_id_str})")
             unmatched += 1
             continue
 
@@ -363,11 +382,11 @@ def sync_units(all_locs=None):
             units, parent_name, prop_subs, all_names
         )
         for bare, qualified in blocked_here:
-            print(f"  ⚠️  {bare!r} and {qualified!r} are both taken — skipping")
+            print(f"  ⚠️  {_shown(repr(bare))} and {_shown(repr(qualified))} are both taken — skipping")
         blocked += len(blocked_here)
 
         qualified_count = sum(1 for _, q in to_create if q)
-        print(f"{prop_full}")
+        print(f"{_shown(prop_full)}")
         note = f", {qualified_count} qualified with the property name" if qualified_count else ""
         print(f"  {existing_count} existing, {len(to_create)} to create{note}")
         new_units = to_create
@@ -410,13 +429,13 @@ def main():
     with open(PROPERTIES_CSV, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
 
-        print("CSV Columns:", reader.fieldnames, "\n")
+        print(f"CSV columns: {len(reader.fieldnames or [])}\n")
 
         for row in reader:
             prop_id = (row.get("Property ID") or "").strip()
 
             if not prop_id:
-                print(f"⚠️ Skipping row (missing Property ID): {row}")
+                print(f"⚠️ Skipping row (missing Property ID): {_shown(row)}")
                 continue
 
             if prop_id not in existing_locations:

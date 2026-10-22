@@ -46,6 +46,7 @@ from helpers.image_utils import (
     safe_asset_tag,
     safe_name,
 )
+from helpers import log_redaction
 from helpers.link_resolver import (
     extract_urls,
     is_icloud_share,
@@ -69,6 +70,8 @@ def _configure_logging(level: str = "INFO") -> None:
     # Silence chatty libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("msal").setLevel(logging.WARNING)
+    # Run logs are public on this repository; see helpers/log_redaction.py.
+    log_redaction.install()
 
 
 log = logging.getLogger("photo_sync")

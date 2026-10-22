@@ -128,20 +128,7 @@ jobs:
           path: photo_sync/photo_sync_state.db
           key: photo-sync-db-${{ github.run_id }}
 
-      - name: Upload run artifacts
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: photo-sync-state
-          path: photo_sync/photo_sync_state.db
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Upload debug screenshots
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: photo-sync-debug
-          path: photo_sync/_debug/
-          if-no-files-found: ignore
-          retention-days: 14
+      # No run artifacts. The dedupe DB used to be uploaded as one, but
+      # artifacts on a public repository can be downloaded by anyone signed in
+      # to GitHub, and the DB lists asset tags, OneDrive links and file names
+      # with employee names in them. The cache above is how the DB persists.

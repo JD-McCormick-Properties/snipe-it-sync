@@ -76,7 +76,8 @@ day rather than within two hours.
 | `usage_report.yml` | manual | Who attaches photos, and through which route |
 
 Every maintenance workflow reports by default and requires an explicit input
-to make changes.
+to make changes. The photo tools and the usage report are described in
+[photo_sync/README.md](photo_sync/README.md#maintenance-tools).
 
 Each sync exits non-zero when a write is rejected, not only when it crashes,
 so the alert covers silent failure too. That matters: the property sync once

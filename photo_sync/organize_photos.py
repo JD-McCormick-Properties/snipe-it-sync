@@ -1,12 +1,10 @@
 """Move loose photos in model folders into their event subfolders.
 
-The sync only creates an event subfolder when a single check-in or check-out
-produced more than one photo (``use_subfolder = batch_size > 1``). A checkout
-with exactly one photo therefore lands flat in the model folder, with the
-event recorded in the filename instead of the folder name. That is why a
-vehicle folder holds a mix of loose files and "Check Out - ..." folders.
-
-This script reclassifies the loose files:
+A one-time repair. The sync used to create an event subfolder only when a
+check-in or check-out produced more than one photo, so a single-photo
+checkout landed flat in the model folder with the event recorded in the
+filename instead. The sync now gives every check-in/out its own folder; this
+script files the loose photos that older versions left behind:
 
   "Model - Alex Rivera - 2026-07-17 09-01-45.jpg"
       carries an uploader, so it came from an activity entry. Matched back to

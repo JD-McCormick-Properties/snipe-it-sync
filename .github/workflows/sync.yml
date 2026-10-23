@@ -5,6 +5,13 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
+# Never two at once. On 2026-10-22 two overlapping runs both tried to upload
+# the AppFolio exports to OneDrive and one failed. Shares the group with
+# cleanup_locations.yml, which edits the same Snipe-IT locations.
+concurrency:
+  group: property-sync
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest

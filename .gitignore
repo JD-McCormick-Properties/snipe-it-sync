@@ -209,3 +209,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# AppFolio exports: downloaded from OneDrive at run time (property_sync/fetch_data.py).
+# They hold rents and revenue and must never be committed to this public repo.
+property_sync/data/
+*.csv
+!**/tests/**/*.csv

@@ -365,9 +365,12 @@ manual trigger exposes a `force` input that maps to `FORCE_RESYNC`.
 The job is pinned to `ubuntu-24.04` rather than `ubuntu-latest`, because
 Playwright installs Chromium's OS packages per distro release and did not
 support Ubuntu 26.04 when `ubuntu-latest` began moving to it. Move the pin
-deliberately once it does. The Playwright install is capped at 5 minutes per
-attempt with three attempts: a stalled Ubuntu mirror once hung it for the
-6-hour default.
+deliberately once it does. The job installs only the Chromium browser, not
+Playwright's `--with-deps` OS packages: the runner image already has every
+library headless Chromium needs, and the extra packages were fonts that the
+runner's Ubuntu mirror repeatedly failed to deliver. A separate step then
+checks that Chromium actually starts, so a broken browser fails the run
+instead of leaving every album quietly unresolved.
 
 ## Stretch ideas
 

@@ -51,46 +51,43 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('photo_sync/requirements.txt') }}
 
-      # The browser usually comes from the cache, but --with-deps still runs
-      # apt-get, and apt has no overall time limit. A stalled Ubuntu mirror hung
-      # this step on 2026-08-18, 08-19 and 09-30 — twice for the 6-hour default
-      # — and every sync queued behind it was dropped. A normal install takes
-      # under 30 seconds, so each attempt is capped at 5 minutes and retried.
-      # Three failures in a row fail the step, which fails the run and alerts.
+      # Only the browser, never --with-deps. Every library headless Chromium
+      # needs is already on the ubuntu-24.04 image; --with-deps added ~26 MB of
+      # CJK and Unicode fonts from the runner's Ubuntu mirror on every run,
+      # useful only for rendering text in screenshots, which the sync never
+      # does. That mirror crawled (down to ~40 KB/s) and failed the sync on
+      # 2026-08-18, 08-19, 09-30, 10-22 and 10-23. The browser itself comes
+      # from Playwright's CDN, and usually from the cache above.
       - name: Install Playwright Chromium
         working-directory: photo_sync
-        timeout-minutes: 20
+        timeout-minutes: 10
         run: |
-          # apt's own network limits, so a stalled download errors and is
-          # retried (from the next mirror in the runner's mirror list) within
-          # seconds instead of using up a whole attempt. The lock timeout makes
-          # apt wait briefly for a straggler rather than fail on the spot.
-          printf '%s\n' \
-            'Acquire::Retries "3";' \
-            'Acquire::http::Timeout "30";' \
-            'Acquire::https::Timeout "30";' \
-            'DPkg::Lock::Timeout "60";' \
-            | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
-
           for attempt in 1 2 3; do
-            if timeout --kill-after=30s 5m python -m playwright install --with-deps chromium; then
+            if timeout --kill-after=15s 3m python -m playwright install chromium; then
               exit 0
             fi
             echo "::warning::Playwright install attempt $attempt failed or stalled"
-            # The timeout stops Playwright but not the apt-get it launched
-            # through sudo. On 2026-10-22 that apt-get kept running and held
-            # the dpkg lock, so attempts 2 and 3 failed in seconds on the lock
-            # instead of retrying. Stop it, then let dpkg finish anything a
-            # kill interrupted.
-            sudo pkill -9 -x apt-get || true
-            sudo pkill -9 -f '^/usr/lib/apt/methods/' || true
-            sudo pkill -9 -x dpkg || true
-            sleep 5
-            sudo dpkg --configure -a || true
             sleep 15
           done
           echo "::error::Playwright install failed 3 times"
           exit 1
+
+      # Without this, a Chromium that can't start would make every Google
+      # Photos album come back "unresolved", which is retried quietly rather
+      # than alerted. Fail here instead, where it is obvious.
+      - name: Check Chromium starts
+        working-directory: photo_sync
+        run: |
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page()
+              page.set_content("<p>ok</p>")
+              assert page.inner_text("p") == "ok"
+              print("Chromium", browser.version, "starts and renders")
+              browser.close()
+          PY
 
       - name: Restore dedupe DB
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

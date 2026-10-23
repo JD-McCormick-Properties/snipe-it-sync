@@ -53,7 +53,7 @@ def test_empty_body_is_not_an_error():
     "stored,intended",
     [
         ("100 &amp; 102 Example Street", "100 & 102 Example Street"),
-        ("Joe&#039;s Soley Owned Parent LLC", "Joe's Soley Owned Parent LLC"),
+        ("Pat&#039;s Example Holdings LLC", "Pat's Example Holdings LLC"),
         ("Smith &amp; Sons&#039; Place", "Smith & Sons' Place"),
         ("plain text", "plain text"),
     ],
@@ -96,9 +96,9 @@ def test_address_without_line_two():
 # Names are globally unique in Snipe-IT, but existence was checked only
 # within the parent, so 15 names used elsewhere were retried and rejected
 # every run. The qualified fallback that fixed it then produced
-# "Skyline Drive - Skyline Drive" for single-unit properties.
+# "Maple Court - Maple Court" for single-unit properties.
 # --------------------------------------------------------------------- #
-PARENT = "Seminole Woods"
+PARENT = "Oak Ridge"
 
 
 def test_free_name_is_created_bare():
@@ -108,22 +108,22 @@ def test_free_name_is_created_bare():
 
 def test_name_taken_elsewhere_is_qualified():
     create, _, blocked = sp.plan_units(["122"], PARENT, {}, {"122"})
-    assert create == [("Seminole Woods - 122", True)] and blocked == []
+    assert create == [("Oak Ridge - 122", True)] and blocked == []
 
 
 def test_unit_matching_its_own_parent_is_skipped():
     """Single-unit properties list themselves; the parent already covers it."""
     create, existing, blocked = sp.plan_units(
-        ["Skyline Drive"], "Skyline Drive", {}, {"skyline drive"}
+        ["Maple Court"], "Maple Court", {}, {"maple court"}
     )
     assert create == [] and existing == 1 and blocked == []
 
 
 def test_both_names_taken_is_blocked_not_attempted():
     create, _, blocked = sp.plan_units(
-        ["999"], PARENT, {}, {"999", "seminole woods - 999"}
+        ["999"], PARENT, {}, {"999", "oak ridge - 999"}
     )
-    assert create == [] and blocked == [("999", "Seminole Woods - 999")]
+    assert create == [] and blocked == [("999", "Oak Ridge - 999")]
 
 
 def test_existing_bare_unit_is_not_recreated():
@@ -134,7 +134,7 @@ def test_existing_bare_unit_is_not_recreated():
 def test_existing_qualified_unit_is_not_recreated_under_its_bare_name():
     """The regression that would re-create a qualified unit on every run."""
     create, existing, _ = sp.plan_units(
-        ["122"], PARENT, {"seminole woods - 122": 1}, {"122", "seminole woods - 122"}
+        ["122"], PARENT, {"oak ridge - 122": 1}, {"122", "oak ridge - 122"}
     )
     assert create == [] and existing == 1
 
@@ -144,7 +144,7 @@ def test_planning_is_idempotent_across_runs():
     subs, names = {}, {"122", "somewhere else"}
 
     create, _, _ = sp.plan_units(units, PARENT, subs, names)
-    assert create == [("101", False), ("Seminole Woods - 122", True)]
+    assert create == [("101", False), ("Oak Ridge - 122", True)]
 
     # simulate those landing in Snipe-IT, then run again
     for name, _q in create:
@@ -172,7 +172,7 @@ def test_unit_directory_groups_units_under_their_property(tmp_path):
     csv_file = tmp_path / "units.csv"
     csv_file.write_text(
         "Unit Name,Other\n"
-        "-> Seminole Woods,\n"
+        "-> Oak Ridge,\n"
         "101,\n"
         "102,\n"
         ",\n"                      # summary row, skipped
@@ -180,7 +180,7 @@ def test_unit_directory_groups_units_under_their_property(tmp_path):
         "122,\n"
     )
     assert sp.parse_unit_directory(str(csv_file)) == {
-        "Seminole Woods": ["101", "102"],
+        "Oak Ridge": ["101", "102"],
         "Cox Rentals": ["122"],
     }
 
@@ -194,13 +194,13 @@ def test_units_before_any_property_header_are_ignored(tmp_path):
 def test_property_id_mapping_skips_incomplete_rows(tmp_path):
     csv_file = tmp_path / "props.csv"
     csv_file.write_text(
-        "Property,Property ID\nSeminole Woods,123\nNo ID Here,\n,456\n"
+        "Property,Property ID\nOak Ridge,123\nNo ID Here,\n,456\n"
     )
-    assert sp.load_property_name_to_id(str(csv_file)) == {"Seminole Woods": "123"}
+    assert sp.load_property_name_to_id(str(csv_file)) == {"Oak Ridge": "123"}
 
 
 def test_normalize_collapses_whitespace():
-    assert sp._normalize("202   S.  Randall   Ave.") == "202 S. Randall Ave."
+    assert sp._normalize("300   N.  Example   Ave.") == "300 N. Example Ave."
 
 
 # --------------------------------------------------------------------- #

@@ -255,7 +255,7 @@ def plan_units(units, parent_name, prop_subs, all_names):
 
     Snipe-IT location names are globally unique, so a bare unit like "122"
     can exist only once across every property. When the bare name is taken,
-    fall back to qualifying it with the parent — "Seminole Woods - 122".
+    fall back to qualifying it with the parent — "Oak Ridge - 122".
 
     Returns (to_create, existing_count, blocked) where to_create holds
     (display_name, was_qualified) pairs and blocked lists units whose bare and
@@ -269,7 +269,7 @@ def plan_units(units, parent_name, prop_subs, all_names):
         bare = u.strip()
         # A single-unit property lists the property itself as its only unit,
         # so the name collides with its own parent. Qualifying that yields
-        # "Skyline Drive - Skyline Drive"; the parent location already
+        # "Maple Court - Maple Court"; the parent location already
         # represents it, so there is nothing to add.
         if parent_name and bare.lower() == parent_name.lower():
             existing += 1

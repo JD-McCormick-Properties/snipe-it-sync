@@ -58,7 +58,7 @@ every property containing `&` or an apostrophe look permanently out of date.
 across the whole instance. When the bare name is taken, `plan_units` falls
 back to `<Property> - <Unit>`. A single-unit property lists itself as its only
 unit, so that case is skipped rather than qualified — otherwise you get
-`Skyline Drive - Skyline Drive`.
+`Maple Court - Maple Court`.
 
 **Pagination is sorted by id.** Without an explicit sort, Snipe-IT's ordering
 shifts between requests and a record can be returned twice while another is
